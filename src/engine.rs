@@ -303,6 +303,11 @@ impl<const CHANNELS: usize> ParticulaEngine<CHANNELS> {
         self.sample_count
     }
 
+    /// The sample rate the engine is currently running at.
+    pub fn sample_rate(&self) -> usize {
+        self.sample_rate
+    }
+
     /// Read positions (t-space) of all live particles, in slot order.
     /// Useful for meters and for verifying reverse-playback behaviour in
     /// tests.

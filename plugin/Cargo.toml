@@ -12,6 +12,7 @@ particula = { path = ".." }
 i_am_dsp = { path = "../../i_am_dsp/i_am_dsp" }
 i_am_dsp_iced = { path = "../../i_am_dsp/i_am_dsp_iced" }
 i_am_plugin = { path = "../../i_am_dsp/i_am_plugin" }
+iced = { version = "0.14.0", features = ["canvas", "advanced"] }
 
 [dev-dependencies]
 clack-host = { path = "../../clack/host" }

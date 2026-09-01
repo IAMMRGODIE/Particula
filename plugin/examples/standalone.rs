@@ -10,7 +10,7 @@ fn main() {
     iced::application(|| Demo::new(ParticulaProcessor::new), Demo::update, Demo::view)
         .subscription(|_| Demo::<ParticulaProcessor>::subscriber())
         .theme(theme())
-        .window_size((860.0, 460.0))
+        .window_size((880.0, 560.0))
         .run()
         .expect("failed to run standalone app");
 }

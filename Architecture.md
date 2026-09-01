@@ -154,7 +154,7 @@
 
 - **v0 ✅**：mono 粒子云 —— 读点(三次插值) + 位置平滑 + envelope(-60dB) + 出生规则(等差+抖动+指数衰减) + 成本验证。
 - **v1 ✅**：串行反馈（`feedback_delay` 注入点 + 阻尼 + soft-clip）+ 峰值跟随 position（`position_mode=3`，周期更新近窗峰值）。
-- **v2**：WSOLA 纹理层 ✅ + BPM sync ✅ + stereo ✅ + CLAP/standalone ✅ + UI ⏳（后置）。
+- **v2**：WSOLA 纹理层 ✅ + BPM sync ✅ + stereo ✅ + CLAP/standalone ✅ + **HOMOLOGY 风格控制面 UI ✅**（`plugin/src/ui.rs`：暗黑主题、点阵 sigil、12 个精选参数滑杆走共享原子 ParamMap，GUI/音频线程零共享可变状态）。
 
 ## 13. 待定项 / TODO
 
