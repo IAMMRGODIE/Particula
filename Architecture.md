@@ -1,6 +1,6 @@
 # Particula — 实验性声音设计粒子效果器 · 架构文档
 
-> 状态：架构讨论已收敛，尚未进入实现。里程碑 v0 → v1 → v2，每步可听。
+> 状态：v0（mono 粒子云）已实现并通过测试；v1 → v2 里程碑待做。
 > 关联代码库：`i_am_dsp`（workspace 根：`i_am_dsp/Cargo.toml`）。particula 计划成为该 workspace 的第 6 个成员。
 
 ## 1. 定位与目标
@@ -62,6 +62,7 @@
 - 所有位置调制源（固定值 / LFO / 随机 / 峰值跟随）**直接产出 t**；链路为 `pos_target → DoubleTimeConstant 平滑 → 实际读取位置`，杜绝突变 click。
 - 峰值跟随：在 t 空间按头相对索引扫描（`i → t = i/(capacity-1)`），与 WaveTable 隐藏的地址映射保持一致；短窗 RMS/峰 + 滞后 + 平滑。
 - 边界：三次插值在 t 边缘需要 clamp；`t ≈ 1` 即最新样本（本帧刚写入的干声），允许读；
+- **冷启动填充**：t=0 是最老样本、t=1 是最新，`t·(capacity-1)` 索引区域的音频要等对应样本写入后才存在。新引擎/大 history 的前 `t·capacity` 个样本中，读取点靠前的粒子会读到静音（v0 实测：capacity=4096、t=0.25 需约 1024 样本填充）。onset 靠近 1 可最快读到新鲜音频；行为符合滑窗语义，文档化即可。
 - 出生初值（等差数列 + 随机偏移）也直接落在 t 空间。
 
 ## 5. 粒子
@@ -92,7 +93,7 @@
 2. `s = source.sample(t)`（source ∈ { history, texture(v2) }，三次插值已在 WaveTable 内）
 3. `s = s * playback_rate`（粒度重采样；速率变化即音高变化）
 4. `s = iir_freq_shifter.process(s)`（`IIRFreqShifter<ORDER=4, CHANNELS=1>`）
-5. `s = s * envelope`（指数衰减，采样级连续）
+5. `s = s * envelope`（线性 attack + 指数衰减至生命终点 -60 dB，采样级连续）
 6. `output += s`；`history.add_at(head - feedback_delay, s * feedback_gain)`（soft-knee）
 
 注意：ORDER 是编译期常量（粒子池要求同型），选定 4（预算 64~256 粒子，见 §10）。
@@ -129,7 +130,7 @@
 ## 10. 性能规则
 
 - 音频线程零分配（粒子池 slot-map + free-list；WSOLA 纹理层低频刷新允许少量分配，后续可复用 buffer）。
-- 粒子预算：64~256 → `IIRFreqShifter<ORDER=4, 1>`；AoS 起步，代码里预留 SoA/SIMD 迁移标记。
+- 粒子预算：64~256 → `IIRFreqShifter<ORDER=4, 1>`（代码中为 `FREQ_SHIFTER_ORDER = 4`）；AoS 起步，代码里预留 SoA/SIMD 迁移标记。
 - 每粒子每样本成本估算：三次插值（~4 次表读）+ IIR Hilbert（ORDER=4 → 8 个二阶全通 ≈ 16~32 MAC）+ Biquad + 相位振荡（sin/cos 用递推或 sin_table）+ envelope。256 粒子 × 48kHz 桌面无压力。
 
 ## 11. 模块划分与集成
