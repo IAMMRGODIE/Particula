@@ -33,9 +33,7 @@ fn pan_gains<const CHANNELS: usize>(pan: f32) -> [f32; CHANNELS] {
         }
         n => {
             let inv = 1.0 / n as f32;
-            for x in &mut g {
-                *x = inv;
-            }
+            g.fill(inv);
         }
     }
     g

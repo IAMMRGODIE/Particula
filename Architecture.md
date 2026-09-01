@@ -1,6 +1,6 @@
 # Particula — 实验性声音设计粒子效果器 · 架构文档
 
-> 状态：v0 / v1 / v2·WSOLA 纹理层 / v2·BPM sync / v2·stereo 已实现并通过 24 个测试；剩余：UI/CLAP 导出。
+> 状态：引擎 v0/v1/v2 全部完成（24 个测试），CLAP 导出 ✅（`plugin/` crate → `ParticulaCloud.clap`），standalone ✅（iced Demo 宿主）；UI 设计暂缓。
 > 关联代码库：`i_am_dsp`（workspace 根：`i_am_dsp/Cargo.toml`）。particula 计划成为该 workspace 的第 6 个成员。
 
 ## 1. 定位与目标
@@ -137,7 +137,9 @@
 
 ## 11. 模块划分与集成
 
-- 位置：`C:\projects\dsp\particula`，注册为 `i_am_dsp/Cargo.toml` workspace 第 6 个成员（共享 `[workspace.dependencies]` / `i_am_dsp_derive`）。
+- 位置：`C:\projects\dsp\particula` —— **独立 workspace**（`[package] particula` + `plugin/` 子 crate），非 i_am_dsp workspace 成员；引擎经 path 依赖 `i_am_dsp`（`default-features=false`）。
+- **CLAP/standalone 导出**：`plugin/` crate（`crate-type = ["cdylib", "rlib"]`）——`ParticulaProcessor(Paramed<ParticulaEngine<2>>)`：`Processer` 包装 + 空视图占位（UI 后置）+ `Plugin` (Descriptor/param_map) + `export_clap!`；standalone 用 `i_am_dsp_iced::demo::Demo`（iced application + cpal）。宿主参数自动化 = `Paramed` 的 ParamMap 原子表 → 音频线程 `sync_params()`。
+- 产物：`cargo build --release -p particula_plugin` → 将 `target/release/particula_plugin.dll` 改名为 `ParticulaCloud.clap`；standalone：`cargo run --release -p particula_plugin --example standalone`。
 - 文件：
   - `engine.rs` — `Effect<CHANNELS>` 实现、每 block 编排
   - `history.rs` — 反馈注入点写接口 `add_at` + 峰值扫描 `recent_peak_position`
@@ -151,7 +153,7 @@
 
 - **v0 ✅**：mono 粒子云 —— 读点(三次插值) + 位置平滑 + envelope(-60dB) + 出生规则(等差+抖动+指数衰减) + 成本验证。
 - **v1 ✅**：串行反馈（`feedback_delay` 注入点 + 阻尼 + soft-clip）+ 峰值跟随 position（`position_mode=3`，周期更新近窗峰值）。
-- **v2**：WSOLA 纹理层 ✅ + BPM sync ✅ + stereo ✅ + UI/CLAP ⏳。
+- **v2**：WSOLA 纹理层 ✅ + BPM sync ✅ + stereo ✅ + CLAP/standalone ✅ + UI ⏳（后置）。
 
 ## 13. 待定项 / TODO
 

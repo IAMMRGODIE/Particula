@@ -100,7 +100,7 @@ fn main() -> std::io::Result<()> {
 
     let mut ctx: Box<dyn ProcessContext> = Box::new(());
     let (mut out_l, mut out_r) = (Vec::with_capacity(input_l.len()), Vec::with_capacity(input_r.len()));
-    for (l, r) in input_l.into_iter().zip(input_r.into_iter()) {
+    for (l, r) in input_l.into_iter().zip(input_r) {
         let mut buf = [l, r];
         engine.process(&mut buf, &[], &mut ctx);
         out_l.push(buf[0]);
