@@ -87,6 +87,12 @@ pub struct ParticulaEngine<const CHANNELS: usize = 1> {
     #[range(min = 0.001, max = 1.0)]
     #[logarithmic]
     pub gain_decay_ratio: f32,
+    /// Floor for the generational strength decay: the cloud never gets
+    /// quieter than `initial_gain * min_gain_ratio`, so spawning keeps
+    /// producing audible particles forever. Set 0 to let it decay into
+    /// silence (the pre-floor behaviour). Default 0.05 = -26 dB.
+    #[range(min = 0.0, max = 1.0)]
+    pub min_gain_ratio: f32,
     #[range(min = 0.0, max = 1.0)]
     pub initial_gain: f32,
 
@@ -216,6 +222,7 @@ impl<const CHANNELS: usize> ParticulaEngine<CHANNELS> {
             position_step: 0.0,
             position_jitter: 0.02,
             gain_decay_ratio: 0.9,
+            min_gain_ratio: 0.05,
             initial_gain: 0.5,
             attack_ms: 10.0,
             lifetime_ms_min: 100.0,
@@ -297,9 +304,12 @@ impl<const CHANNELS: usize> ParticulaEngine<CHANNELS> {
     }
 
     /// The spawn rule's strength (linear gain) for generation n:
-    /// initial_gain * decay_ratio^n — the exponential decay law.
+    /// `initial_gain * max(decay_ratio^n, min_gain_ratio)`. The exponential
+    /// decay bottoms out at the min_gain_ratio floor so the cloud cannot
+    /// silently exhaust itself a few seconds in.
     pub fn spawn_rule_gain(&self, n: usize) -> f32 {
-        self.initial_gain * self.gain_decay_ratio.powi(n as i32)
+        (self.initial_gain * self.gain_decay_ratio.powi(n as i32))
+            .max(self.initial_gain * self.min_gain_ratio)
     }
 
     /// Builds one particle from the current parameters (spawn rule + shape).
