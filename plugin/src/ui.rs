@@ -688,16 +688,23 @@ impl ParticulaView {
         } else {
             TEXT_FAINT
         };
-        button(text(if on { "ON" } else { "OFF" })
-            .font(MONO)
-            .size(10)
-            .color(text_style))
+        button(
+            container(
+                text(if on { "ON" } else { "OFF" })
+                    .font(MONO)
+                    .size(10)
+                    .color(text_style),
+            )
+            .width(Length::Fill)
+            .align_x(iced::Alignment::Center),
+        )
         .on_press_with(move || {
             map.set("enabled", !on, std::sync::atomic::Ordering::Relaxed);
             ParticulaMessage::Tick
         })
         .style(flat_button)
-        .padding([4, 14])
+        .width(Length::Fixed(56.0))
+        .padding([4, 6])
         .into()
     }
 
