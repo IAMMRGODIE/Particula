@@ -112,6 +112,14 @@ pub fn snapshot(id: &'static str, map: &ParamMap) -> Option<ParamSnapshot> {
     })
 }
 
+/// Human names for integer parameters (falls back to numeric 0..n).
+fn discrete_options(id: &str) -> &'static [&'static str] {
+    match id {
+        "position_mode" => &["Fixed", "LFO", "Walk", "Peak"],
+        _ => &["0", "1", "2", "3", "4", "5", "6", "7"],
+    }
+}
+
 /// Short label for an exposed parameter.
 pub fn label(id: &str) -> String {
     let name = match id {
@@ -265,6 +273,8 @@ struct PanelAnim {
     /// Page-switch animation cursor: 1 right after a switch, easing to 0
     /// (drives the content crossfade).
     fade: f32,
+    /// Animated panel height morphing toward the page's natural size.
+    height: f32,
 }
 
 impl PanelAnim {
@@ -274,6 +284,7 @@ impl PanelAnim {
             opacity: 0.0,
             page: 0,
             fade: 0.0,
+            height: 150.0,
         }
     }
     fn update(&mut self, dt: f32) {
@@ -356,7 +367,10 @@ impl i_am_dsp_iced::SyncedView for ParticulaView {
             ParticulaMessage::MasterEnabled(v) => {
                 self.param_map.set("enabled", *v, std::sync::atomic::Ordering::Relaxed);
             }
-            ParticulaMessage::Param { .. } => {}
+            ParticulaMessage::Param { id, value } => {
+                set_param_as(&self.param_map, id, *value);
+                self.randomize_pending.retain(|(pid, _)| pid != id);
+            }
         }
     }
 
@@ -460,11 +474,15 @@ impl ParticulaView {
             *phase += RING_SPEED[r] * dt;
         }
 
-        // 4. Tween the panels + ease page-switch cursors (content crossfade).
+        // 4. Tween the panels + ease page-switch cursors + morph the box
+        //    height toward the current page's natural size.
         self.panel_left.update(dt);
         self.panel_right.update(dt);
         self.panel_left.fade = (self.panel_left.fade - dt * 5.5).max(0.0);
         self.panel_right.fade = (self.panel_right.fade - dt * 5.5).max(0.0);
+        let k = 1.0 - (-6.0 * dt).exp();
+        self.panel_left.height += (self.panel_height_target(0) - self.panel_left.height) * k;
+        self.panel_right.height += (self.panel_height_target(1) - self.panel_right.height) * k;
     }
 
     fn live(&self) -> usize {
@@ -530,6 +548,8 @@ impl ParticulaView {
             ]
             .width(Length::Fill)
             .height(Length::Fill),
+            hint_arrow(1.0 - self.panel_left.opacity, true),
+            hint_arrow(1.0 - self.panel_right.opacity, false),
         ]
         .width(Length::Fill)
         .height(Length::Fill);
@@ -654,6 +674,30 @@ impl ParticulaView {
         .into()
     }
 
+    /// Natural height (px) of the current page in the given panel.
+    fn panel_height_target(&self, side: usize) -> f32 {
+        let pages = if side == 0 { LEFT_PAGES } else { RIGHT_PAGES };
+        let page = pages[self.panel_page(side).min(pages.len().saturating_sub(1))];
+        let mode = snapshot("position_mode", &self.param_map)
+            .map(|s| s.value as usize)
+            .unwrap_or(1);
+        let rows = page
+            .1
+            .iter()
+            .filter(|(_, cond)| *cond == 0 || usize::from(*cond) == mode + 1)
+            .count();
+        // Header bar (tabs + title) + top/bottom padding; rows at ~30 px each.
+        72.0 + rows as f32 * 30.0
+    }
+
+    fn panel_page(&self, side: usize) -> usize {
+        if side == 0 {
+            self.panel_left.page
+        } else {
+            self.panel_right.page
+        }
+    }
+
     /// One fading side panel with a page picker on top and mode-filtered
     /// parameter rows (condition code matches the position_mode set).
     fn side_panel(
@@ -720,15 +764,39 @@ impl ParticulaView {
             .padding([20, 24]),
         )
         .width(Length::Fixed(anim.opacity * 300.0))
+        .height(Length::Fixed(anim.height.max(20.0)))
         .style(panel_style(None, LINE, 1.0, 0.0))
         .into()
     }
 
     fn param_row(&self, id: &'static str, a: f32) -> Element<'static, ParticulaMessage> {
+        // Discrete (Bool / Int) parameters get option buttons instead of a
+        // slider, which cannot carry their atomic value type.
+        if let Some(av) = self.param_map.get(id) {
+            let discrete = match &*av {
+                AtomicValue::Bool { .. } => Some(["OFF", "ON"].as_slice()),
+                AtomicValue::Int { .. } => Some(discrete_options(id)),
+                _ => None,
+            };
+            if let Some(options) = discrete {
+                let cur = match av.load(std::sync::atomic::Ordering::Relaxed) {
+                    SetValue::Bool(v) => {
+                        if v {
+                            1
+                        } else {
+                            0
+                        }
+                    }
+                    SetValue::Int(v) => v as usize,
+                    _ => 0,
+                };
+                return self.discrete_row(id, options, cur, a);
+            }
+        }
+
         let Some(snap) = snapshot(id, &self.param_map) else {
             return iced::widget::space().into();
         };
-        let map = self.param_map.clone();
         container(
             row![
                 text(label(id))
@@ -737,8 +805,7 @@ impl ParticulaView {
                     .color(Color::from_rgba(0.60, 0.60, 0.60, a))
                     .width(Length::Fixed(76.0)),
                 slider(snap.min..=snap.max, snap.value, move |v| {
-                    map.set(id, v, std::sync::atomic::Ordering::Relaxed);
-                    ParticulaMessage::Tick
+                    ParticulaMessage::Param { id, value: v }
                 })
                 .step(nice_step(snap.min, snap.max))
                 .style(slider_style(a)),
@@ -755,9 +822,75 @@ impl ParticulaView {
         .style(panel_style(None, LINE, 1.0, 0.0))
         .into()
     }
+
+    /// A row of option buttons for discrete (Bool / Int) parameters,
+    /// styled like the page tabs (I II III).
+    fn discrete_row(
+        &self,
+        id: &'static str,
+        options: &[&'static str],
+        current: usize,
+        a: f32,
+    ) -> Element<'static, ParticulaMessage> {
+        let mut buttons: Vec<Element<'static, ParticulaMessage>> = Vec::new();
+        for (i, name) in options.iter().enumerate() {
+            let active = i == current;
+            buttons.push(
+                button(
+                    text(*name)
+                        .font(DISPLAY)
+                        .size(11)
+                        .color(if active { TEXT } else { TEXT_FAINT }),
+                )
+                .on_press(ParticulaMessage::Param {
+                    id,
+                    value: i as f32,
+                })
+                .style(page_button_style(active))
+                .padding([2, 8])
+                .into(),
+            );
+        }
+        container(
+            row![
+                text(label(id))
+                    .font(MONO)
+                    .size(9)
+                    .color(Color::from_rgba(0.60, 0.60, 0.60, a))
+                    .width(Length::Fixed(76.0)),
+                row(buttons).spacing(4),
+            ]
+            .align_y(iced::Alignment::Center)
+            .spacing(8),
+        )
+        .padding([4, 14])
+        .style(panel_style(None, LINE, 1.0, 0.0))
+        .into()
+    }
 }
 
 // -------------------------------- randomize ---------------------------------
+/// Writes a f32 into the map with the parameter's actual atomic type
+/// (Bool / Int / Float) so discrete parameters accept clicks fine.
+fn set_param_as(map: &ParamMap, id: &str, v: f32) {
+    use std::sync::atomic::Ordering;
+    let Some(av) = map.get(id) else {
+        return;
+    };
+    match &*av {
+        AtomicValue::Bool { .. } => {
+            map.set(id, v > 0.5, Ordering::Relaxed);
+        }
+        AtomicValue::Int { .. } => {
+            map.set(id, v as i32, Ordering::Relaxed);
+        }
+        AtomicValue::Float { .. } => {
+            map.set(id, v, Ordering::Relaxed);
+        }
+        _ => {}
+    }
+}
+
 /// Gathers a shuffled target value for every engine parameter (except the
 /// header trio) using the seeded SplitMix64 — the previous ad-hoc RNG was
 /// biased toward the top of the range, so Randomize appeared to max everything
@@ -869,6 +1002,28 @@ fn page_button_style(active: bool) -> impl Fn(&iced::Theme, button::Status) -> b
             ..Default::default()
         }
     }
+}
+
+/// A faint chevron hinting the clickable half (fades out while the panel
+/// on that side is visible).
+fn hint_arrow(alpha: f32, left: bool) -> Element<'static, ParticulaMessage> {
+    let a = alpha.clamp(0.0, 1.0) * 0.55;
+    container(
+        text(if left { "◀" } else { "▶" })
+            .font(DISPLAY)
+            .size(20)
+            .color(Color::from_rgba(1.0, 1.0, 1.0, a)),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .align_x(if left {
+        iced::Alignment::Start
+    } else {
+        iced::Alignment::End
+    })
+    .align_y(iced::Alignment::Center)
+    .padding([0, 16])
+    .into()
 }
 
 fn flat_button(_: &iced::Theme, status: button::Status) -> button::Style {
