@@ -189,8 +189,8 @@ const LEFT_PAGES: &[Pg] = &[
     (
         "I · SPAWN",
         &[
-            ("spawn_interval_ms", 6),
             ("spawn_sync", 0),
+            ("spawn_interval_ms", 6),
             ("spawn_interval_beats", 5),
             ("fallback_bpm", 0),
             ("max_particles", 0),
@@ -340,6 +340,8 @@ pub struct ParticulaView {
     panel_right: PanelAnim,
     /// Whether the About overlay is open.
     about: bool,
+    /// Fade cursor for the About overlay (0..1), eased every tick.
+    about_fade: f32,
     /// Randomize targets being eased into (id, target) on each tick.
     randomize_pending: Vec<(String, f32)>,
 
@@ -420,6 +422,7 @@ impl ParticulaView {
             panel_left: PanelAnim::hidden(),
             panel_right: PanelAnim::hidden(),
             about: false,
+            about_fade: 0.0,
             randomize_pending: Vec::new(),
             last_frame: None,
         }
@@ -502,6 +505,9 @@ impl ParticulaView {
         let k = 1.0 - (-6.0 * dt).exp();
         self.panel_left.height += (self.panel_height_target(0) - self.panel_left.height) * k;
         self.panel_right.height += (self.panel_height_target(1) - self.panel_right.height) * k;
+        // About overlay fade.
+        let goal = if self.about { 1.0 } else { 0.0 };
+        self.about_fade += (goal - self.about_fade) * k;
     }
 
     fn live(&self) -> usize {
@@ -621,19 +627,21 @@ impl ParticulaView {
             .style(panel_style(Some(BG), Color::TRANSPARENT, 0.0, 0.0));
 
         // ---- optional About overlay ----
-        if self.about {
+        if self.about_fade > 0.004 {
+            let f = self.about_fade;
+            let fg = Color::from_rgba(0.93, 0.93, 0.93, f);
+            let dim = Color::from_rgba(0.60, 0.60, 0.60, f);
+            let faint = Color::from_rgba(0.36, 0.36, 0.36, f);
+            let bg_ov = Color::from_rgba(0.030, 0.030, 0.030, f * 0.92);
             let overlay: Element<'static, ParticulaMessage> = container(
                 column![
-                    text("PARTICULA").font(DISPLAY).size(30).color(TEXT),
-                    text("a granular-cloud signal engine")
-                        .font(MONO)
-                        .size(10)
-                        .color(TEXT_DIM),
+                    text("PARTICULA").font(DISPLAY).size(30).color(fg),
+                    text("a granular-cloud signal engine").font(MONO).size(10).color(dim),
                     text("one shared history · feedback · texture · bpm · reverse")
                         .font(MONO)
                         .size(9)
-                        .color(TEXT_FAINT),
-                    button(text("CLOSE").font(MONO).size(9).color(TEXT))
+                        .color(faint),
+                    button(text("CLOSE").font(MONO).size(9).color(fg))
                         .on_press(ParticulaMessage::ShowAbout(false))
                         .style(flat_button)
                         .padding([4, 10]),
@@ -645,7 +653,7 @@ impl ParticulaView {
             .height(Length::Fill)
             .align_x(iced::Alignment::Center)
             .align_y(iced::Alignment::Center)
-            .style(panel_style(Some(BG), LINE, 1.0, 0.0))
+            .style(panel_style(Some(bg_ov), LINE, 1.0, 0.0))
             .into();
             return iced::widget::stack![base, overlay].into();
         }
@@ -862,10 +870,14 @@ impl ParticulaView {
             let active = i == current;
             buttons.push(
                 button(
-                    text(*name)
-                        .font(DISPLAY)
-                        .size(11)
-                        .color(if active { TEXT } else { TEXT_FAINT }),
+                    container(
+                        text(*name)
+                            .font(MONO)
+                            .size(10)
+                            .color(if active { TEXT } else { TEXT_FAINT }),
+                    )
+                    .width(Length::Fill)
+                    .align_x(iced::Alignment::Center),
                 )
                 .on_press(ParticulaMessage::Param {
                     id,
