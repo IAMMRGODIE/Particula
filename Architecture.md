@@ -93,7 +93,7 @@
 
 1. `t = smoother(position)`
 2. `s = source.sample(t)`（source ∈ { history, texture(v2) }，三次插值已在 WaveTable 内）
-3. `s = s * playback_rate`（粒度重采样；速率变化即音高变化）
+3. `s = s * playback_rate`（粒度重采样；速率变化即音高变化）；**`reverse_chance`（0..1）让部分粒子取负速率：读头沿 t 减小的方向走 = 逆着 history 倒放**（`rem_euclid` 处理环绕；倒放在 t 方向上是「读更早写入的样本」，时间上即逆转）
 4. `s = iir_freq_shifter.process(s)`（`IIRFreqShifter<ORDER=4, CHANNELS=1>`）
 5. `s = s * envelope`（线性 attack + 指数衰减至生命终点 -60 dB，采样级连续）
 6. `output += s`；反馈写回：`fb = soft_clip(s * feedback_gain)` → 单极点低通阻尼 → `history.add_at(feedback_delay, fb)`（v1 已实现，串行语义）

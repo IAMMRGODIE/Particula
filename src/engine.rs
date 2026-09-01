@@ -114,6 +114,11 @@ pub struct ParticulaEngine<const CHANNELS: usize = 1> {
     #[range(min = -5000.0, max = 5000.0)]
     pub freq_shift_max: f32,
 
+    // Reverse playback: a fraction of the spawned particles read the history
+    // backwards (negative playback rate = drift towards older samples).
+    #[range(min = 0.0, max = 1.0)]
+    pub reverse_chance: f32,
+
     // Position smoothing.
     #[range(min = 0.1, max = 1000.0)]
     pub position_smooth_ms: f32,
@@ -231,6 +236,7 @@ impl<const CHANNELS: usize> ParticulaEngine<CHANNELS> {
             pitch_max: 1.5,
             freq_shift_min: -120.0,
             freq_shift_max: 120.0,
+            reverse_chance: 0.0,
             position_smooth_ms: 20.0,
             position_mode: 1,
             lfo_rate_hz: 0.15,
@@ -297,6 +303,16 @@ impl<const CHANNELS: usize> ParticulaEngine<CHANNELS> {
         self.sample_count
     }
 
+    /// Read positions (t-space) of all live particles, in slot order.
+    /// Useful for meters and for verifying reverse-playback behaviour in
+    /// tests.
+    pub fn particle_positions(&self) -> Vec<f32> {
+        self.slots
+            .iter()
+            .filter_map(|s| s.as_ref().map(|p| p.position))
+            .collect()
+    }
+
     /// The spawn rule's arithmetic position for generation n
     /// (t-space, wrapped). Pure: jitter = 0 gives the exact sequence.
     pub fn spawn_rule_position(&self, n: usize) -> f32 {
@@ -319,7 +335,17 @@ impl<const CHANNELS: usize> ParticulaEngine<CHANNELS> {
             + self.position_jitter * self.rng.sym())
         .rem_euclid(1.0);
         let gain = self.spawn_rule_gain(n);
-        let rate = self.rng.range(self.pitch_min, self.pitch_max);
+        let magnitude = self.rng.range(self.pitch_min, self.pitch_max);
+        // Reverse playback: negative rate walks the read head towards older
+        // samples (Architecture.md sec.5.3). Only consumes RNG when enabled,
+        // so the default (chance = 0) keeps the exact previous RNG stream.
+        let rate = if self.reverse_chance > 0.0
+            && self.rng.next_f32() < self.reverse_chance
+        {
+            -magnitude
+        } else {
+            magnitude
+        };
         let shift = self.rng.range(self.freq_shift_min, self.freq_shift_max);
         let pan = self.rng.range(self.pan_min, self.pan_max);
         let lmin = (self.lifetime_ms_min * sample_rate as f32 / 1000.0) as usize;

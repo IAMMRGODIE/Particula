@@ -51,7 +51,9 @@ pub struct Particle {
     smoother: DoubleTimeConstant<1>,
     /// Position modulation source.
     position_mod: PositionMod,
-    /// Granular playback rate (1.0 = original speed).
+    /// Granular playback rate (1.0 = original speed). A *negative* rate
+    /// plays backwards: the drift walks the read head towards older history
+    /// samples (reverse playback, `ParticulaEngine::reverse_chance`).
     pub playback_rate: f32,
     /// Per-particle frequency shifter (stateful: Hilbert + Biquad + phase).
     freq_shifter: IIRFreqShifter<FREQ_SHIFTER_ORDER, 1>,

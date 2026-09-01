@@ -70,6 +70,7 @@ fn main() -> std::io::Result<()> {
     engine.lifetime_ms_max = 1000.0;
     engine.pitch_min = 0.5;
     engine.pitch_max = 1.5;
+    engine.reverse_chance = 0.3; // a third of the cloud plays backwards
     engine.freq_shift_min = -80.0;
     engine.freq_shift_max = 80.0;
     engine.position_smooth_ms = 20.0;
