@@ -352,6 +352,7 @@ read as a constellation of voices.")
                     map.set(id_for_event, v, Ordering::Relaxed);
                     ParticulaMessage::Tick
                 })
+                .step(nice_step(snap.min, snap.max))
                 .style(slider_style),
                 text(format!("{:.2}", self.val(id).map(|s| s.value).unwrap_or(0.0)))
                     .font(MONO)
@@ -560,6 +561,29 @@ impl<M> canvas::Program<M> for SigilMatrix {
         }
         vec![frame.into_geometry()]
     }
+}
+
+/// A tidy, range-adaptive slider step: target ~200 notches across the
+/// parameter span (iced defaults to step = 1, which quantizes e.g. a 0..1
+/// blend slider to two positions).
+fn nice_step(min: f32, max: f32) -> f32 {
+    let span = (max - min).abs();
+    if span <= 0.0 {
+        return 0.0;
+    }
+    let raw = span / 200.0;
+    let base = 10.0_f32.powf(raw.log10().floor());
+    let m = raw / base;
+    let nice = if m < 1.5 {
+        1.0
+    } else if m < 3.0 {
+        2.0
+    } else if m < 7.0 {
+        5.0
+    } else {
+        10.0
+    };
+    (nice * base).max(1e-4)
 }
 
 /// Tiny 4x2 pip row for a panel header (value-scaled).
