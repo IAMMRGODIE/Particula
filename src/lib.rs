@@ -9,12 +9,14 @@
 //! BPM sync, stereo, CLAP wrapper.
 
 pub mod engine;
+pub mod history;
 pub mod particle;
 pub mod position_mod;
 pub mod rng;
 pub mod spawner;
 
 pub use engine::ParticulaEngine;
+pub use history::{add_at, recent_peak_position};
 pub use particle::Particle;
 pub use position_mod::PositionMod;
 pub use rng::SplitMix64;

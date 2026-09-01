@@ -1,31 +1,35 @@
 //! The particle cloud engine: shared history + particle pool + spawn rule.
 
+use std::f32::consts::PI;
+
 use i_am_dsp::{Effect, ProcessContext, tools::ring_buffer::RingBuffer};
 use i_am_dsp_derive::Parameters;
 
 use crate::{
+    history::recent_peak_position,
     particle::Particle,
     position_mod::PositionMod,
     rng::SplitMix64,
     spawner::Spawner,
 };
 
-/// Fixed pool capacity of the slot map (Architecture.md §10: 64~256).
+/// Fixed pool capacity of the slot map (Architecture.md sec.10: 64~256).
 pub const DEFAULT_POOL_CAPACITY: usize = 256;
 
-/// The core engine. Mono for v0 (one shared history, particles sum into the
+/// The core engine. Mono for now (one shared history, particles sum into the
 /// single output channel).
 ///
-/// Data flow per sample (see Architecture.md §2):
+/// Data flow per sample (see Architecture.md sec.2):
 /// 1. dry input pushed at the write head;
 /// 2. spawner rules decide whether a particle is born (arithmetic position
 ///    sequence + jitter + exponential strength decay);
 /// 3. every live particle reads the history at its smoothed position with
-///    cubic interpolation, applies playback rate, IIR-Hilbert frequency shift
-///    and the envelope, and accumulates into the wet path;
+///    cubic interpolation, applies playback rate, IIR-Hilbert frequency
+///    shift, the envelope, and writes feedback back into the history (v1,
+///    serial semantics);
 /// 4. output = dry * input + wet.
 ///
-/// v0 has no feedback writes, no WSOLA texture layer and no BPM sync.
+/// No WSOLA texture layer and no BPM sync yet.
 #[derive(Parameters)]
 pub struct ParticulaEngine {
     // --- live-tweakable parameters (host-visible) ---
@@ -74,8 +78,9 @@ pub struct ParticulaEngine {
     #[range(min = 0.1, max = 1000.0)]
     pub position_smooth_ms: f32,
 
-    // Position modulation source (0 = fixed, 1 = LFO, 2 = random walk).
-    #[range(min = 0, max = 2)]
+    // Position modulation source (0 = fixed, 1 = LFO, 2 = random walk,
+    // 3 = peak follow).
+    #[range(min = 0, max = 3)]
     pub position_mode: i32,
     #[range(min = 0.01, max = 50.0)]
     pub lfo_rate_hz: f32,
@@ -85,6 +90,20 @@ pub struct ParticulaEngine {
     pub random_walk_step: f32,
     #[range(min = 1.0, max = 2000.0)]
     pub random_walk_interval_ms: f32,
+    #[range(min = 1.0, max = 2000.0)]
+    pub peak_window_ms: f32,
+    #[range(min = 1.0, max = 1000.0)]
+    pub peak_update_ms: f32,
+    #[range(min = 0.0, max = 1.0)]
+    pub peak_threshold: f32,
+
+    // Feedback (v1).
+    #[range(min = 0.0, max = 0.99)]
+    pub feedback_gain: f32,
+    #[range(min = 0.0, max = 2000.0)]
+    pub feedback_delay_ms: f32,
+    #[range(min = 0.0, max = 20000.0)]
+    pub feedback_damping_hz: f32,
 
     // --- internal state (never host parameters) ---
     #[skip]
@@ -103,6 +122,10 @@ pub struct ParticulaEngine {
     sample_rate: usize,
     #[skip]
     spawn_count: usize,
+    #[skip]
+    peak_position_t: f32,
+    #[skip]
+    next_peak_update: usize,
 }
 
 impl Default for ParticulaEngine {
@@ -114,9 +137,9 @@ impl Default for ParticulaEngine {
 impl ParticulaEngine {
     /// Creates a new engine.
     ///
-    /// `history_capacity` bounds the maximum readable delay in samples;
+    /// history_capacity bounds the maximum readable delay in samples;
     /// changing it during a run invalidates the buffer content (see
-    /// Architecture.md §3.2), so pick it up front.
+    /// Architecture.md sec.3.2), so pick it up front.
     pub fn new(history_capacity: usize, sample_rate: usize, seed: u64) -> Self {
         Self {
             dry: 1.0,
@@ -141,6 +164,12 @@ impl ParticulaEngine {
             lfo_depth: 0.15,
             random_walk_step: 0.02,
             random_walk_interval_ms: 200.0,
+            peak_window_ms: 150.0,
+            peak_update_ms: 30.0,
+            peak_threshold: 0.01,
+            feedback_gain: 0.0,
+            feedback_delay_ms: 40.0,
+            feedback_damping_hz: 3000.0,
             history: RingBuffer::new(history_capacity.max(1)),
             slots: Vec::with_capacity(DEFAULT_POOL_CAPACITY),
             free: Vec::with_capacity(DEFAULT_POOL_CAPACITY),
@@ -149,6 +178,8 @@ impl ParticulaEngine {
             sample_count: 0,
             sample_rate,
             spawn_count: 0,
+            peak_position_t: 0.5,
+            next_peak_update: 0,
         }
     }
 
@@ -179,14 +210,14 @@ impl ParticulaEngine {
         self.sample_count
     }
 
-    /// The spawn rule's arithmetic position for generation `n`
-    /// (t-space, wrapped). Pure: `jitter = 0` gives the exact sequence.
+    /// The spawn rule's arithmetic position for generation n
+    /// (t-space, wrapped). Pure: jitter = 0 gives the exact sequence.
     pub fn spawn_rule_position(&self, n: usize) -> f32 {
         (self.base_position + n as f32 * self.position_step).rem_euclid(1.0)
     }
 
-    /// The spawn rule's strength (linear gain) for generation `n`:
-    /// `initial_gain * decay_ratio^n` — the exponential decay law.
+    /// The spawn rule's strength (linear gain) for generation n:
+    /// initial_gain * decay_ratio^n — the exponential decay law.
     pub fn spawn_rule_gain(&self, n: usize) -> f32 {
         self.initial_gain * self.gain_decay_ratio.powi(n as i32)
     }
@@ -207,12 +238,13 @@ impl ParticulaEngine {
         let mode = match self.position_mode {
             0 => PositionMod::fixed(),
             1 => PositionMod::lfo(self.lfo_rate_hz, self.lfo_depth, &mut self.rng),
-            _ => PositionMod::random_walk(
+            2 => PositionMod::random_walk(
                 self.random_walk_step,
                 self.lfo_depth,
                 (self.random_walk_interval_ms * sample_rate as f32 / 1000.0) as usize,
                 &mut self.rng,
             ),
+            _ => PositionMod::peak_follow(),
         };
         Particle::new(
             sample_rate,
@@ -221,6 +253,7 @@ impl ParticulaEngine {
             rate,
             shift,
             gain,
+            self.feedback_gain,
             attack,
             lifetime,
             self.position_smooth_ms,
@@ -237,7 +270,7 @@ impl ParticulaEngine {
 
 impl Effect<1> for ParticulaEngine {
     fn delay(&self) -> usize {
-        // No FIR / WSOLA in v0: zero latency.
+        // No FIR / WSOLA yet: zero latency.
         0
     }
 
@@ -264,7 +297,7 @@ impl Effect<1> for ParticulaEngine {
         self.sample_count += 1;
 
         // 2. spawn scheduling (pure parameter-driven, audio thread resident;
-        //    see Architecture.md §6).
+        //    see Architecture.md sec.6).
         let interval = ((self.spawn_interval_ms * sample_rate as f32 / 1000.0).max(1.0)) as usize;
         if self.spawner.poll(self.sample_count, interval) {
             self.spawner.bump_sequence();
@@ -282,28 +315,56 @@ impl Effect<1> for ParticulaEngine {
             }
         }
 
-        // 3. particles: read, pitch, shift, envelope, sum. Serial iteration
-        //    order matters only once feedback lands in v1.
+        // 3. shared peak-follow target (periodic update of the loudest
+        //    sample in the recent history window).
+        let update = ((self.peak_update_ms * sample_rate as f32 / 1000.0) as usize).max(1);
+        if self.sample_count >= self.next_peak_update {
+            let window = ((self.peak_window_ms * sample_rate as f32 / 1000.0) as usize).max(1);
+            self.peak_position_t = recent_peak_position(&self.history, window, self.peak_threshold);
+            self.next_peak_update = self.sample_count + update;
+        }
+
+        // 4. particles: read, pitch, shift, envelope, sum; serial feedback
+        //    writes into the history (Architecture.md sec.3.1: later
+        //    particles see earlier ones' feedback this frame).
         let mut wet = 0.0_f32;
         let dt = 1.0 / sample_rate as f32;
-        let (rng, history) = (&mut self.rng, &self.history);
+        let feedback_delay = ((self.feedback_delay_ms * sample_rate as f32 / 1000.0) as usize)
+            .min(self.history.capacity());
+        let fb_lp_a = if self.feedback_damping_hz <= 0.0 {
+            1.0
+        } else {
+            1.0 - (-2.0 * PI * self.feedback_damping_hz / sample_rate as f32).exp()
+        };
+        let peak_t = self.peak_position_t;
+        let sample_count = self.sample_count;
+        let (rng, history) = (&mut self.rng, &mut self.history);
         let mut i = 0;
         while i < self.slots.len() {
             let Some(p) = &mut self.slots[i] else {
                 i += 1;
                 continue;
             };
-            match p.process(history, dt, self.sample_count, rng, ctx) {
+            match p.process(
+                history,
+                dt,
+                sample_count,
+                peak_t,
+                feedback_delay,
+                fb_lp_a,
+                rng,
+                ctx,
+            ) {
                 Some(s) => wet += s,
                 None => {
                     self.slots[i] = None;
                     self.free.push(i);
-                }
+                },
             }
             i += 1;
         }
 
-        // 4. dry + wet.
+        // 5. dry + wet.
         samples[0] = input * self.dry + wet;
     }
 }

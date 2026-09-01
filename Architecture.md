@@ -1,6 +1,6 @@
 # Particula — 实验性声音设计粒子效果器 · 架构文档
 
-> 状态：v0（mono 粒子云）已实现并通过测试；v1 → v2 里程碑待做。
+> 状态：v0（mono 粒子云）与 v1（串行反馈 + 峰值跟随）已实现并通过测试（10 个）；v2（WSOLA 纹理层 + BPM sync + stereo + CLAP）待做。
 > 关联代码库：`i_am_dsp`（workspace 根：`i_am_dsp/Cargo.toml`）。particula 计划成为该 workspace 的第 6 个成员。
 
 ## 1. 定位与目标
@@ -75,7 +75,7 @@
 - `playback_rate: f32`（粒度播放速率，1.0 = 原速；≠ 1 即音高变化）
 - `freq_shift: f32`（Hz，频率位移）
 - envelope 状态（阶段 + 当前增益，指数衰减）
-- `feedback_gain: f32`
+- `feedback_gain: f32`（spawn 时快照；延迟点与阻尼系数由引擎每样本传入）和反馈阻尼低通状态
 - `IIRHilbert<4> + Biquad` 滤波状态（频率位移用）
 - LFO 相位（波形共享、相位私有）
 - 寿命（采样计数）与死亡标志
@@ -94,7 +94,7 @@
 3. `s = s * playback_rate`（粒度重采样；速率变化即音高变化）
 4. `s = iir_freq_shifter.process(s)`（`IIRFreqShifter<ORDER=4, CHANNELS=1>`）
 5. `s = s * envelope`（线性 attack + 指数衰减至生命终点 -60 dB，采样级连续）
-6. `output += s`；`history.add_at(head - feedback_delay, s * feedback_gain)`（soft-knee）
+6. `output += s`；反馈写回：`fb = soft_clip(s * feedback_gain)` → 单极点低通阻尼 → `history.add_at(feedback_delay, fb)`（v1 已实现，串行语义）
 
 注意：ORDER 是编译期常量（粒子池要求同型），选定 4（预算 64~256 粒子，见 §10）。
 
@@ -116,9 +116,9 @@
 
 ## 8. 反馈路径与稳定性（汇总）
 
-- 串行可见性（已定，§3.1）。
-- 注入点可选：`head - feedback_delay`（f32，取整 + clamp）。
-- 稳定性三件套：增益 <1 裕量、环路一阶低通/DC 阻塞、写回 soft-knee。
+- 串行可见性（v1 已实现，§3.1）：粒子按池迭代顺序写回，本帧生效。
+- 注入点可选：`feedback_delay`（0..2000 ms，v1 已实现；delay=0 即 `history[-1]`，delay=cap-1 即最老槽）。
+- 稳定性三件套（v1 已实现）：增益 ≤0.99、`feedback_damping_hz` 单极点低通（0 = 直通）、写回 soft-clip（`x/(1+|x|)`）。
 - 反馈延迟与插值窗口在 t 边缘的读写混叠行为：文档化即可（混沌特征的一部分）。
 
 ## 9. WSOLA 纹理层（v2）
@@ -138,6 +138,7 @@
 - 位置：`C:\projects\dsp\particula`，注册为 `i_am_dsp/Cargo.toml` workspace 第 6 个成员（共享 `[workspace.dependencies]` / `i_am_dsp_derive`）。
 - 文件：
   - `engine.rs` — `Effect<CHANNELS>` 实现、每 block 编排
+  - `history.rs` — 反馈注入点写接口 `add_at` + 峰值扫描 `recent_peak_position`
   - `particle.rs` — 粒子状态机（含 envelope/lifetime/滤波状态）
   - `spawner.rs` — 出生规则与调度（FreeRun / Beats）
   - `position_mod.rs` — 位置调制源（固定/LFO/随机/峰值跟随）+ 平滑
@@ -146,14 +147,14 @@
 
 ## 12. 里程碑
 
-- **v0**：mono 粒子云 —— 无反馈、无 WSOLA、无 BPM。验证：读点 + 平滑 + envelope + 出生规则 + 成本。
-- **v1**：反馈（可选注入点 `feedback_delay`）+ 峰值跟随 position。
-- **v2**：WSOLA 纹理层 + BPM sync + stereo + UI。
+- **v0 ✅**：mono 粒子云 —— 读点(三次插值) + 位置平滑 + envelope(-60dB) + 出生规则(等差+抖动+指数衰减) + 成本验证。
+- **v1 ✅**：串行反馈（`feedback_delay` 注入点 + 阻尼 + soft-clip）+ 峰值跟随 position（`position_mode=3`，周期更新近窗峰值）。
+- **v2 ⏳**：WSOLA 纹理层 + BPM sync + stereo + UI + CLAP 导出。
 
 ## 13. 待定项 / TODO
 
-- `RingBuffer::add_at(index, value)` 写接口（库扩展，反馈注入点需要）。
 - `RingBuffer::resize()` 运行时容量变化的 UI 策略（清空 vs 双 buffer 过渡）。
+- 峰值跟随目前取近窗全局峰值；如需"当前位置附近局部峰值吸附"（用户原话），加局部搜索模式。
 - 反馈 t 边缘与插值窗口的读写混叠文档。
 - BPM reset / transport 重启策略细节。
 - 纹理层交叉淡化参数。

@@ -20,6 +20,11 @@ pub enum PositionMod {
         next_walk: usize,
         value: f32,
     },
+    /// Follow the engine's shared peak position (t of the loudest sample in
+    /// the recent history window; updated periodically, see
+    /// ParticulaEngine::peak_* parameters). The engine passes that target in
+    /// each sample, so this variant carries no per-particle state.
+    PeakFollow,
 }
 
 impl PositionMod {
@@ -35,6 +40,11 @@ impl PositionMod {
             rate_hz: rate_hz.abs(),
             phase: rng.range(0.0, std::f32::consts::TAU),
         }
+    }
+
+    /// Follow the engine-level recent peak position.
+    pub fn peak_follow() -> Self {
+        Self::PeakFollow
     }
 
     /// Random walk around the onset, re-stepped every `interval_samples`.
@@ -57,7 +67,7 @@ impl PositionMod {
     /// clamps to `[0, 1]` and feeds it into the particle's smoother.
     pub fn next_offset(&mut self, dt: f32, sample_count: usize, rng: &mut SplitMix64) -> f32 {
         match self {
-            Self::Fixed => 0.0,
+            Self::Fixed | Self::PeakFollow => 0.0,
             Self::Lfo { depth, rate_hz, phase } => {
                 *phase += *rate_hz * std::f32::consts::TAU * dt;
                 *depth * phase.sin()
