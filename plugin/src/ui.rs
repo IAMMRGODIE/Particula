@@ -263,10 +263,8 @@ struct PanelAnim {
     /// Current page index within the panel.
     page: usize,
     /// Page-switch animation cursor: 1 right after a switch, easing to 0
-    /// (only drives content opacity now; see `height` for the box morph).
+    /// (drives the content crossfade).
     fade: f32,
-    /// Animated panel height morphing toward the current page's natural size.
-    height: f32,
 }
 
 impl PanelAnim {
@@ -276,7 +274,6 @@ impl PanelAnim {
             opacity: 0.0,
             page: 0,
             fade: 0.0,
-            height: 130.0,
         }
     }
     fn update(&mut self, dt: f32) {
@@ -463,15 +460,11 @@ impl ParticulaView {
             *phase += RING_SPEED[r] * dt;
         }
 
-        // 4. Tween the panels + ease page-switch cursors + morph the box
-        //    height from its current size to the current page's natural size.
+        // 4. Tween the panels + ease page-switch cursors (content crossfade).
         self.panel_left.update(dt);
         self.panel_right.update(dt);
         self.panel_left.fade = (self.panel_left.fade - dt * 5.5).max(0.0);
         self.panel_right.fade = (self.panel_right.fade - dt * 5.5).max(0.0);
-        let k = (1.0 - (-6.0 * dt).exp()) as f32;
-        self.panel_left.height += (self.panel_height_target(0) - self.panel_left.height) * k;
-        self.panel_right.height += (self.panel_height_target(1) - self.panel_right.height) * k;
     }
 
     fn live(&self) -> usize {
@@ -663,21 +656,6 @@ impl ParticulaView {
 
     /// One fading side panel with a page picker on top and mode-filtered
     /// parameter rows (condition code matches the position_mode set).
-    /// Natural height (px) of the current page in the given panel.
-    fn panel_height_target(&self, side: usize) -> f32 {
-        let pages = if side == 0 { LEFT_PAGES } else { RIGHT_PAGES };
-        let page = pages[self.panel_page(side).min(pages.len().saturating_sub(1))];
-        let mode = snapshot("position_mode", &self.param_map)
-            .map(|s| s.value as usize)
-            .unwrap_or(1);
-        let rows = page
-            .1
-            .iter()
-            .filter(|(_, cond)| *cond == 0 || usize::from(*cond) == mode + 1)
-            .count();
-        96.0 + rows as f32 * 30.0
-    }
-
     fn panel_page(&self, side: usize) -> usize {
         if side == 0 {
             self.panel_left.page
@@ -699,8 +677,7 @@ impl ParticulaView {
         let mode = snapshot("position_mode", &self.param_map)
             .map(|s| s.value as usize)
             .unwrap_or(1);
-        // Page-transition cursor drives content opacity only; the box morphs
-        // its height via PanelAnim.height (see animate()).
+        // Page-transition cursor drives the content crossfade.
         let a = 1.0 - anim.fade * 0.72;
         let rows = page
             .1
@@ -751,7 +728,6 @@ impl ParticulaView {
             .padding([20, 24]),
         )
         .width(Length::Fixed(anim.opacity * 300.0))
-        .height(Length::Fixed(anim.height.max(20.0)))
         .style(panel_style(None, LINE, 1.0, 0.0))
         .into()
     }
@@ -784,6 +760,7 @@ impl ParticulaView {
             .spacing(8),
         )
         .padding([4, 14])
+        .style(panel_style(None, LINE, 1.0, 0.0))
         .into()
     }
 }
