@@ -25,7 +25,7 @@ use i_am_dsp_iced::Processor;
 use i_am_plugin::{Descriptor, Plugin, Tag, WindowOptions, export_clap};
 use particula::ParticulaEngine;
 
-use ui::{GROUPS, ParticulaMessage, ParticulaView, snapshot};
+use ui::{ParticulaMessage, ParticulaView};
 
 /// The processor: the particle cloud engine behind the host parameter
 /// automation layer and the HOMOLOGY-styled control surface.
@@ -110,17 +110,11 @@ impl Processor for ParticulaProcessor {
     }
 
     fn synced_view(&self) -> Self::SyncedView {
-        let map = self.engine.param_map();
-        let params = GROUPS
-            .iter()
-            .flat_map(|(_, ids)| ids.iter().copied())
-            .filter_map(|id| snapshot(id, &map))
-            .collect();
+        // The view owns Arc handles into the shared state and reads/writes
+        // them live on every frame; nothing here needs a snapshot.
         ParticulaView {
-            params,
-            live: self.stats[0].load(Ordering::Relaxed),
-            spawned: self.stats[1].load(Ordering::Relaxed),
-            sample_rate: self.stats[2].load(Ordering::Relaxed),
+            param_map: self.engine.param_map(),
+            stats: self.stats.clone(),
         }
     }
 }

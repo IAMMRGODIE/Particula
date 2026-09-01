@@ -1,15 +1,20 @@
 //! Particula control surface — styled after the HOMOLOGY sigil-system site.
 //!
-//! Near-black theme, hairline white rules, wide-track caps for display text,
-//! monospaced micro-labels, dot-matrix sigils, glow highlights. All live
-//! values come from the shared atomic ParamMap (no shared mutable state
-//! between the GUI and audio threads), and every slider sends a
-//! Param{id,value} message into that map, which Paramed applies per sample on
-//! the audio thread.
+//! The view holds the shared atomic ParamMap + counter Arcs and reads/writes
+//! them directly on every frame (the wavetable_synth pattern): sliders write
+//! straight into the map in their on_change closure, so nothing depends on the
+//! plugin's message routing. Stats and preset cards work the same way.
 
-use std::sync::atomic::Ordering;
+use std::sync::{
+    Arc,
+    atomic::Ordering,
+};
 
-use iced::{Color, Element, Font, Length, font::Family, widget::{canvas::{self, Frame, Path, Program, Stroke}, column, container, row, slider, text}};
+use iced::{
+    Color, Element, Font, Length,
+    font::Family,
+    widget::{button, canvas, canvas::Path, column, container, row, slider, text},
+};
 
 use i_am_dsp::prelude::{AtomicValue, ParamMap, SetValue};
 
@@ -31,9 +36,9 @@ pub const DISPLAY: Font = Font {
 // ------------------------------- messages -----------------------------------
 #[derive(Debug, Clone)]
 pub enum ParticulaMessage {
-    /// Set one engine parameter via the shared atomic ParamMap.
+    /// Kept for CLI/structure compatibility; the surface writes the map
+    /// directly instead of routing through messages.
     Param { id: &'static str, value: f32 },
-    /// 16 ms heartbeat from the host timer (keeps the frame refreshing).
     Tick,
 }
 
@@ -50,11 +55,9 @@ impl i_am_dsp_iced::Message for ParticulaMessage {
 }
 
 // --------------------------- parameter snapshot ------------------------------
-/// A read-only copy of one engine parameter, taken from the shared atomic
-/// ParamMap on the GUI thread (thread-safe by construction).
+/// One parameter read live from the shared atomic map.
 #[derive(Debug, Clone, Copy)]
 pub struct ParamSnapshot {
-    pub id: &'static str,
     pub value: f32,
     pub min: f32,
     pub max: f32,
@@ -92,6 +95,49 @@ pub fn label(id: &str) -> &str {
         .unwrap_or(id)
 }
 
+/// Presets: clickable constellation cards (HOMOLOGY .preset).
+pub const PRESETS: &[(&str, &[(&str, f32)])] = &[
+    (
+        "Halo Chamber",
+        &[
+            ("wet", 0.95),
+            ("feedback_gain", 0.5),
+            ("texture_blend", 0.7),
+            ("texture_stretch", 0.7),
+            ("reverse_chance", 0.15),
+        ],
+    ),
+    (
+        "Reverse Rain",
+        &[
+            ("reverse_chance", 0.85),
+            ("spawn_interval_ms", 25.0),
+            ("lifetime_ms_max", 900.0),
+            ("feedback_gain", 0.35),
+            ("lfo_depth", 0.3),
+        ],
+    ),
+    (
+        "Metal Swarm",
+        &[
+            ("pitch_max", 2.2),
+            ("freq_shift_min", -400.0),
+            ("freq_shift_max", 400.0),
+            ("spawn_interval_ms", 14.0),
+            ("wet", 1.0),
+            ("dry", 0.25),
+        ],
+    ),
+    (
+        "Deep Drift",
+        &[
+            ("texture_blend", 0.9),
+            ("texture_stretch", 0.45),
+            ("lfo_depth", 0.1),
+        ],
+    ),
+];
+
 /// Reads one parameter out of the shared atomic map.
 pub fn snapshot(id: &'static str, map: &ParamMap) -> Option<ParamSnapshot> {
     let av = map.get(id)?;
@@ -114,19 +160,17 @@ pub fn snapshot(id: &'static str, map: &ParamMap) -> Option<ParamSnapshot> {
         _ => 0.0,
     };
     Some(ParamSnapshot {
-        id,
         value,
         min: range.0,
         max: range.1,
     })
 }
 
-/// A GUI-thread snapshot of everything the surface displays.
+/// The control surface. Owns Arc handles into the shared state; every read is
+/// live, every write lands in the atomic map immediately.
 pub struct ParticulaView {
-    pub params: Vec<ParamSnapshot>,
-    pub live: usize,
-    pub spawned: usize,
-    pub sample_rate: usize,
+    pub param_map: ParamMap,
+    pub stats: Arc<[std::sync::atomic::AtomicUsize; 3]>,
 }
 
 impl i_am_dsp_iced::SyncedView for ParticulaView {
@@ -140,11 +184,21 @@ impl i_am_dsp_iced::SyncedView for ParticulaView {
 }
 
 impl ParticulaView {
-    fn slot(&self, id: &str) -> Option<&ParamSnapshot> {
-        self.params.iter().find(|p| p.id == id)
+    fn val(&self, id: &'static str) -> Option<ParamSnapshot> {
+        snapshot(id, &self.param_map)
     }
 
-    fn build<'a>(&'a self) -> Element<'a, ParticulaMessage> {
+    fn live(&self) -> usize {
+        self.stats[0].load(Ordering::Relaxed)
+    }
+    fn spawned(&self) -> usize {
+        self.stats[1].load(Ordering::Relaxed)
+    }
+    fn sample_rate(&self) -> usize {
+        self.stats[2].load(Ordering::Relaxed)
+    }
+
+    fn build(&self) -> Element<'static, ParticulaMessage> {
         let header = container(
             row![
                 sigil_mark(26.0),
@@ -173,13 +227,13 @@ read as a constellation of voices.")
                 .size(10)
                 .color(TEXT_DIM),
             iced::widget::canvas(SigilMatrix {
-                lit: self.live.min(30),
+                lit: self.live().min(30),
                 cols: 6,
                 rows: 5,
             })
             .width(Length::Fixed(150.0))
             .height(Length::Fixed(96.0)),
-            text(format!("LIVE  {}  /  POOL  256", self.live))
+            text(format!("LIVE  {}  /  POOL  256", self.live()))
                 .font(MONO)
                 .size(8)
                 .color(TEXT_FAINT),
@@ -187,8 +241,7 @@ read as a constellation of voices.")
         .spacing(10)
         .padding([0, 4]);
 
-        // Groups 2 x 2 so the sliders get room to breathe.
-        let group_columns: Vec<Element<'a, ParticulaMessage>> = GROUPS
+        let group_columns: Vec<Element<'static, ParticulaMessage>> = GROUPS
             .chunks(2)
             .map(|pair| {
                 let cols = pair
@@ -203,49 +256,89 @@ read as a constellation of voices.")
 
         let middle = row![sigil_column, groups].spacing(32).padding([22, 24]);
 
+        // Preset constellation cards (homology .preset with a mini-matrix).
+        let preset_row = row(
+            PRESETS
+                .iter()
+                .map(|(name, params)| self.preset_card(name, params))
+                .collect::<Vec<_>>(),
+        )
+        .spacing(12)
+        .padding([0, 24]);
+
         let stats = container(
             row![
-                stat_pill(self.live, "LIVE"),
-                stat_pill(self.spawned, "SPAWNED"),
-                stat_pill(self.sample_rate, "SAMPLE RATE"),
+                stat_pill(self.live(), "LIVE"),
+                stat_pill(self.spawned(), "SPAWNED"),
+                stat_pill(self.sample_rate(), "SAMPLE RATE"),
                 stat_pill(3, "SIGIL"),
             ]
             .padding([14, 24]),
         )
         .style(panel_style(Some(BG_PANEL), LINE, 1.0, 0.0));
 
-        container(column![header, middle, stats].spacing(0))
+        container(column![header, middle, preset_row, stats].spacing(0))
             .width(Length::Fill)
             .height(Length::Fill)
             .style(panel_style(Some(BG), Color::TRANSPARENT, 0.0, 0.0))
             .into()
     }
 
-    /// One panel: kicker title + a vertical stack of parameter rows.
-    fn panel<'a>(
-        &'a self,
-        title: &'static str,
-        ids: &'static [&'static str],
-    ) -> Element<'a, ParticulaMessage> {
+    /// One panel: kicker title + a vertical stack of live parameter rows.
+    fn panel(&self, title: &'static str, ids: &'static [&'static str]) -> Element<'static, ParticulaMessage> {
         let rows = ids
             .iter()
-            .filter_map(|id| self.slot(id).map(|s| (id, s)))
-            .map(|(id, snap)| self.param_row(id, snap))
+            .map(|id| self.param_row(id))
             .collect::<Vec<_>>();
 
         column![
-            text(title).font(MONO).size(9).color(TEXT_DIM),
+            row![
+                text(title).font(MONO).size(9).color(TEXT_DIM),
+                iced::widget::space(),
+                iced::widget::canvas(SigilPips {
+                    lit: self.group_lit(ids),
+                    cols: 4,
+                    rows: 2,
+                })
+                .width(Length::Fixed(48.0))
+                .height(Length::Fixed(20.0)),
+            ]
+            .align_y(iced::Alignment::Center),
             column(rows).spacing(2),
         ]
         .spacing(10)
         .into()
     }
 
-    fn param_row<'a>(
-        &'a self,
-        id: &'static str,
-        snap: &'a ParamSnapshot,
-    ) -> Element<'a, ParticulaMessage> {
+    /// Fractional lit count across a panel, scaled to 8 pip positions.
+    fn group_lit(&self, ids: &'static [&'static str]) -> usize {
+        let mut sum = 0.0_f32;
+        let mut n = 0usize;
+        for id in ids {
+            if let Some(s) = self.val(id) {
+                let norm = if s.max > s.min {
+                    ((s.value - s.min) / (s.max - s.min)).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                sum += norm;
+                n += 1;
+            }
+        }
+        if n == 0 {
+            0
+        } else {
+            ((sum / n as f32) * 8.0).round() as usize
+        }
+    }
+
+    fn param_row(&self, id: &'static str) -> Element<'static, ParticulaMessage> {
+        let Some(snap) = self.val(id) else {
+            return iced::widget::space().into();
+        };
+        let map = self.param_map.clone();
+        let id_for_event = id;
+
         container(
             row![
                 text(label(id))
@@ -254,10 +347,13 @@ read as a constellation of voices.")
                     .color(TEXT_DIM)
                     .width(Length::Fixed(72.0)),
                 slider(snap.min..=snap.max, snap.value, move |v| {
-                    ParticulaMessage::Param { id, value: v }
+                    // Write the atomic map directly: the audio thread applies
+                    // it via Paramed::sync_params on the next sample.
+                    map.set(id_for_event, v, Ordering::Relaxed);
+                    ParticulaMessage::Tick
                 })
                 .style(slider_style),
-                text(format!("{:.2}", snap.value))
+                text(format!("{:.2}", self.val(id).map(|s| s.value).unwrap_or(0.0)))
                     .font(MONO)
                     .size(9)
                     .color(TEXT_FAINT)
@@ -268,6 +364,37 @@ read as a constellation of voices.")
         )
         .padding([7, 2])
         .style(panel_style(None, LINE, 1.0, 0.0))
+        .into()
+    }
+
+    /// A clickable preset card: applying the constellation to the map.
+    fn preset_card(
+        &self,
+        name: &'static str,
+        params: &'static [(&'static str, f32)],
+    ) -> Element<'static, ParticulaMessage> {
+        let map = self.param_map.clone();
+        button(
+            column![
+                iced::widget::canvas(SigilMatrix {
+                    lit: 7,
+                    cols: 4,
+                    rows: 4,
+                })
+                .width(Length::Fixed(72.0))
+                .height(Length::Fixed(60.0)),
+                text(name).font(MONO).size(9).color(TEXT),
+            ]
+            .spacing(6)
+            .align_x(iced::Alignment::Center),
+        )
+        .on_press_with(move || {
+            for (pid, pv) in params {
+                map.set(pid, *pv, Ordering::Relaxed);
+            }
+            ParticulaMessage::Tick
+        })
+        .style(preset_button_style)
         .into()
     }
 }
@@ -322,6 +449,24 @@ fn slider_style(_: &iced::Theme, _: slider::Status) -> slider::Style {
     }
 }
 
+fn preset_button_style(_: &iced::Theme, status: button::Status) -> button::Style {
+    let (border_color, text_color) = match status {
+        button::Status::Hovered | button::Status::Pressed => (LINE, TEXT),
+        _ => (Color::from_rgba(1.0, 1.0, 1.0, 0.10), TEXT_DIM),
+    };
+    button::Style {
+        background: Some(iced::Background::Color(BG_PANEL)),
+        text_color,
+        border: iced::Border {
+            color: border_color,
+            width: 1.0,
+            radius: 2.0.into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
 // ------------------------------- canvas bits --------------------------------
 /// Header sigil: ring + diagonals + apex dot (HOMOLOGY mark).
 struct SigilMark {
@@ -335,7 +480,7 @@ fn sigil_mark(size: f32) -> Element<'static, ParticulaMessage> {
         .into()
 }
 
-impl<M> Program<M> for SigilMark {
+impl<M> canvas::Program<M> for SigilMark {
     type State = ();
     fn draw(
         &self,
@@ -345,7 +490,8 @@ impl<M> Program<M> for SigilMark {
         bounds: iced::Rectangle,
         _: iced::mouse::Cursor,
     ) -> Vec<canvas::Geometry> {
-        let mut frame = Frame::new(renderer, bounds.size());
+        use iced::widget::canvas::Stroke;
+        let mut frame = canvas::Frame::new(renderer, bounds.size());
         let c = frame.center();
         let r = self.size * 0.42;
         frame.stroke(
@@ -378,14 +524,14 @@ impl<M> Program<M> for SigilMark {
     }
 }
 
-/// Dot matrix whose lit count follows the live particle count.
+/// Dot matrix.
 struct SigilMatrix {
     lit: usize,
     cols: usize,
     rows: usize,
 }
 
-impl<M> Program<M> for SigilMatrix {
+impl<M> canvas::Program<M> for SigilMatrix {
     type State = ();
     fn draw(
         &self,
@@ -395,7 +541,7 @@ impl<M> Program<M> for SigilMatrix {
         bounds: iced::Rectangle,
         _: iced::mouse::Cursor,
     ) -> Vec<canvas::Geometry> {
-        let mut frame = Frame::new(renderer, bounds.size());
+        let mut frame = canvas::Frame::new(renderer, bounds.size());
         let step_x = bounds.width / self.cols as f32;
         let step_y = bounds.height / self.rows as f32;
         let dot = (step_x.min(step_y) * 0.12).max(1.2);
@@ -407,6 +553,44 @@ impl<M> Program<M> for SigilMatrix {
                     GLOW
                 } else {
                     Color::from_rgba(1.0, 1.0, 1.0, 0.08)
+                };
+                frame.fill(&Path::circle(center, dot), color);
+                i += 1;
+            }
+        }
+        vec![frame.into_geometry()]
+    }
+}
+
+/// Tiny 4x2 pip row for a panel header (value-scaled).
+struct SigilPips {
+    lit: usize,
+    cols: usize,
+    rows: usize,
+}
+
+impl<M> canvas::Program<M> for SigilPips {
+    type State = ();
+    fn draw(
+        &self,
+        _: &Self::State,
+        renderer: &iced::Renderer,
+        _: &iced::Theme,
+        bounds: iced::Rectangle,
+        _: iced::mouse::Cursor,
+    ) -> Vec<canvas::Geometry> {
+        let mut frame = canvas::Frame::new(renderer, bounds.size());
+        let step_x = bounds.width / self.cols as f32;
+        let step_y = bounds.height / self.rows as f32;
+        let dot = (step_x.min(step_y) * 0.14).max(1.0);
+        let mut i = 0usize;
+        for r in 0..self.rows {
+            for c in 0..self.cols {
+                let center = iced::Point::new((c as f32 + 0.5) * step_x, (r as f32 + 0.5) * step_y);
+                let color = if i < self.lit {
+                    GLOW
+                } else {
+                    Color::from_rgba(1.0, 1.0, 1.0, 0.07)
                 };
                 frame.fill(&Path::circle(center, dot), color);
                 i += 1;
