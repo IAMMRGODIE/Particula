@@ -262,8 +262,11 @@ struct PanelAnim {
     opacity: f32,
     /// Current page index within the panel.
     page: usize,
-    /// Page-switch animation cursor: 1 right after a switch, easing to 0.
+    /// Page-switch animation cursor: 1 right after a switch, easing to 0
+    /// (only drives content opacity now; see `height` for the box morph).
     fade: f32,
+    /// Animated panel height morphing toward the current page's natural size.
+    height: f32,
 }
 
 impl PanelAnim {
@@ -273,6 +276,7 @@ impl PanelAnim {
             opacity: 0.0,
             page: 0,
             fade: 0.0,
+            height: 130.0,
         }
     }
     fn update(&mut self, dt: f32) {
@@ -454,11 +458,15 @@ impl ParticulaView {
             *phase += RING_SPEED[r] * dt;
         }
 
-        // 4. Tween the panels + ease page-switch cursors.
+        // 4. Tween the panels + ease page-switch cursors + morph the box
+        //    height from its current size to the current page's natural size.
         self.panel_left.update(dt);
         self.panel_right.update(dt);
         self.panel_left.fade = (self.panel_left.fade - dt * 5.5).max(0.0);
         self.panel_right.fade = (self.panel_right.fade - dt * 5.5).max(0.0);
+        let k = (1.0 - (-6.0 * dt).exp()) as f32;
+        self.panel_left.height += (self.panel_height_target(0) - self.panel_left.height) * k;
+        self.panel_right.height += (self.panel_height_target(1) - self.panel_right.height) * k;
     }
 
     fn live(&self) -> usize {
@@ -650,6 +658,29 @@ impl ParticulaView {
 
     /// One fading side panel with a page picker on top and mode-filtered
     /// parameter rows (condition code matches the position_mode set).
+    /// Natural height (px) of the current page in the given panel.
+    fn panel_height_target(&self, side: usize) -> f32 {
+        let pages = if side == 0 { LEFT_PAGES } else { RIGHT_PAGES };
+        let page = pages[self.panel_page(side).min(pages.len().saturating_sub(1))];
+        let mode = snapshot("position_mode", &self.param_map)
+            .map(|s| s.value as usize)
+            .unwrap_or(1);
+        let rows = page
+            .1
+            .iter()
+            .filter(|(_, cond)| *cond == 0 || usize::from(*cond) == mode + 1)
+            .count();
+        104.0 + rows as f32 * 36.0
+    }
+
+    fn panel_page(&self, side: usize) -> usize {
+        if side == 0 {
+            self.panel_left.page
+        } else {
+            self.panel_right.page
+        }
+    }
+
     fn side_panel(
         &self,
         side: usize,
@@ -663,10 +694,9 @@ impl ParticulaView {
         let mode = snapshot("position_mode", &self.param_map)
             .map(|s| s.value as usize)
             .unwrap_or(1);
-        // Page-transition cursor: fade 1 -> 0 smoothly (content alpha +
-        // panel width expand). Rows fade in/out with the transition.
+        // Page-transition cursor drives content opacity only; the box morphs
+        // its height via PanelAnim.height (see animate()).
         let a = 1.0 - anim.fade * 0.72;
-        let w = 300.0 * (0.40 + 0.60 * (1.0 - anim.fade));
         let rows = page
             .1
             .iter()
@@ -674,24 +704,32 @@ impl ParticulaView {
             .map(|(id, _)| self.param_row(id, a))
             .collect::<Vec<_>>();
 
-        // Page picker row (top of the panel).
-        let mut pickers: Vec<Element<'static, ParticulaMessage>> = Vec::new();
+        // Title bar: page buttons inline with the title, serif: [ I ][ II ][ III ] · TITLE
+        let mut title_pickers: Vec<Element<'static, ParticulaMessage>> = Vec::new();
         for (i, (ptitle, _)) in pages.iter().enumerate() {
             let active = i == anim.page;
             let num = ptitle.split(' ').next().unwrap_or("·");
-            pickers.push(
+            title_pickers.push(
                 button(
                     text(num)
-                        .font(MONO)
-                        .size(9)
+                        .font(DISPLAY)
+                        .size(12)
                         .color(if active { TEXT } else { TEXT_FAINT }),
                 )
                 .on_press(ParticulaMessage::PanelPage { side, page: i })
                 .style(page_button_style(active))
-                .padding([3, 5])
+                .padding([2, 6])
                 .into(),
             );
         }
+        let title_bar = row![
+            row(title_pickers).spacing(2),
+            text("·").font(DISPLAY).size(14).color(TEXT_FAINT),
+            text(page.0).font(DISPLAY).size(13).color(TEXT_DIM),
+            iced::widget::space().width(Length::Fill),
+        ]
+        .align_y(iced::Alignment::Center)
+        .spacing(8);
 
         let page_rows = if rows.is_empty() {
             vec![iced::widget::space().into()]
@@ -701,18 +739,14 @@ impl ParticulaView {
 
         container(
             column![
-                row![
-                    text(page.0).font(MONO).size(10).color(TEXT_DIM),
-                    iced::widget::space().width(Length::Fill),
-                ]
-                .align_y(iced::Alignment::Center),
-                row(pickers).spacing(6),
-                iced::widget::space().height(4),
+                title_bar,
+                iced::widget::space().height(6),
                 column(page_rows).spacing(6),
             ]
             .padding([20, 24]),
         )
-        .width(Length::Fixed((anim.opacity * w + 14.0).max(14.0)))
+        .width(Length::Fixed((anim.opacity * 300.0 + 14.0).max(14.0)))
+        .height(Length::Fixed(anim.height.max(20.0)))
         .style(panel_style(None, LINE, 1.0, 0.0))
         .into()
     }
@@ -756,7 +790,11 @@ impl ParticulaView {
 /// biased toward the top of the range, so Randomize appeared to max everything
 /// out. The caller eases these targets into the map over a few ticks.
 fn random_targets(map: &ParamMap) -> Vec<(String, f32)> {
-    let mut rng = SplitMix64::new(0xC0FFEE);
+    let seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0x5EED_FA11);
+    let mut rng = SplitMix64::new(seed);
     let mut out = Vec::new();
     for i in 0..map.len() {
         let Some(id) = map.query_param_id(i).map(|s| s.to_string()) else {
