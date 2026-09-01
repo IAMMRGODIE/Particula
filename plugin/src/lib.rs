@@ -143,6 +143,14 @@ impl Plugin for ParticulaProcessor {
     fn param_map(&self) -> ParamMap {
         self.engine.param_map()
     }
+
+    // Crimson Text (OFL, free for commercial use) embedded so the GUI can use
+    // it as the display serif without depending on the host system fonts.
+    const EMBEDDED_FONT: Option<&'static [u8]> =
+        Some(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../CrimsonText-Regular-5.ttf"
+        )));
 }
 
 export_clap!(ParticulaProcessor);

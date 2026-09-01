@@ -37,8 +37,9 @@ pub const BG_PANEL: Color = Color::from_rgb(0.046, 0.046, 0.046);
 pub const GLOW: Color = Color::from_rgb(0.95, 0.95, 0.95);
 
 pub const MONO: Font = Font::MONOSPACE;
+/// Embedded Crimson Text (loaded by the plugin's EMBEDDED_FONT hook).
 pub const DISPLAY: Font = Font {
-    family: Family::Serif,
+    family: Family::Name("Crimson Text"),
     ..Font::DEFAULT
 };
 
@@ -125,6 +126,11 @@ pub fn label(id: &str) -> String {
         "feedback_gain" => "Feedback",
         "feedback_delay_ms" => "FB Delay",
         "base_position" => "Base Pos",
+        "position_step" => "Pos Step",
+        "position_jitter" => "Jitter",
+        "gain_decay_ratio" => "Decay",
+        "min_gain_ratio" => "Gain Floor",
+        "initial_gain" => "Init Gain",
         "wet" => "Wet",
         "dry" => "Dry",
         _ => id,
@@ -133,10 +139,28 @@ pub fn label(id: &str) -> String {
 }
 
 /// Leaves, particles, panels: parameters shown in each side panel.
-const LEFT_PARAMS: &[&'static str] =
-    &["spawn_interval_ms", "max_particles", "reverse_chance", "base_position"];
-const RIGHT_PARAMS: &[&'static str] =
-    &["texture_blend", "feedback_gain", "lfo_depth", "position_smooth_ms"];
+const LEFT_PARAMS: &[&'static str] = &[
+    "spawn_interval_ms",
+    "max_particles",
+    "reverse_chance",
+    "base_position",
+    "position_step",
+    "position_jitter",
+    "gain_decay_ratio",
+    "min_gain_ratio",
+    "initial_gain",
+];
+const RIGHT_PARAMS: &[&'static str] = &[
+    "texture_blend",
+    "texture_stretch",
+    "feedback_gain",
+    "feedback_delay_ms",
+    "lfo_rate_hz",
+    "lfo_depth",
+    "position_smooth_ms",
+    "pitch_max",
+    "wet",
+];
 
 // --------------------------------- dots -------------------------------------
 /// One lit dot on the sigil: a particle, fading over its lifetime.
@@ -520,7 +544,7 @@ impl ParticulaView {
             ]
             .padding([18, 22]),
         )
-        .width(Length::Fixed((anim.opacity * 210.0 + 18.0).max(18.0)))
+        .width(Length::Fixed((anim.opacity * 300.0 + 14.0).max(14.0)))
         .style(panel_style(None, LINE, 1.0, 0.0))
         .into()
     }
@@ -536,7 +560,7 @@ impl ParticulaView {
                     .font(MONO)
                     .size(9)
                     .color(TEXT_DIM)
-                    .width(Length::Fixed(64.0)),
+                    .width(Length::Fixed(76.0)),
                 slider(snap.min..=snap.max, snap.value, move |v| {
                     map.set(id, v, std::sync::atomic::Ordering::Relaxed);
                     ParticulaMessage::Tick
