@@ -1,6 +1,6 @@
 # Particula — 实验性声音设计粒子效果器 · 架构文档
 
-> 状态：v0（mono 粒子云）与 v1（串行反馈 + 峰值跟随）已实现并通过测试（10 个）；v2（WSOLA 纹理层 + BPM sync + stereo + CLAP）待做。
+> 状态：v0 / v1 / v2·WSOLA 纹理层 已实现并通过 15 个测试；剩余 v2 项：BPM sync、stereo、CLAP 导出。
 > 关联代码库：`i_am_dsp`（workspace 根：`i_am_dsp/Cargo.toml`）。particula 计划成为该 workspace 的第 6 个成员。
 
 ## 1. 定位与目标
@@ -121,11 +121,12 @@
 - 稳定性三件套（v1 已实现）：增益 ≤0.99、`feedback_damping_hz` 单极点低通（0 = 直通）、写回 soft-clip（`x/(1+|x|)`）。
 - 反馈延迟与插值窗口在 t 边缘的读写混叠行为：文档化即可（混沌特征的一部分）。
 
-## 9. WSOLA 纹理层（v2）
+## 9. WSOLA 纹理层（v2）✅
 
-- 复用 `PitchShifter` 骨架（`effects/pitch_shifter.rs`）：`history` → 每 half-capacity 刷新一次 `stretched_buffer`（`tools/wsola.rs` 批量处理）→ 粒子经 `WaveTable::sample` 流式读取。
-- 粒子音高与纹理层的关系：粒子 pitch 走粒度重采样；纹理层另提供一个全局"素材拉伸"参数（time-stretch），与粒子音高独立。
-- stretch 参数变化时对 stretched_buffer 做交叉淡化，避免 zipper（现有 PitchShifter 直接重跑，纹理层版本需处理）。
+- **已实现**：`texture.rs` 的 `Texture` —— 自带滑动窗口 tap（跟随 history 最新样本）→ 每 `texture_refresh_ms` 用 `tools/wsola.rs` 批量拉伸成冻结 wavetable（`texture_window_ms` 窗口，`texture_stretch` 0.25..4）→ 粒子经 `texture_blend`（0..1）混合读取。
+- **防 zipper**：每次刷新都做旧→新交叉淡化（`texture_crossfade_ms`），同时覆盖"素材滑动"与"stretch 参数突变"两类边界跳变。
+- 与粒子音高独立：粒子 pitch 仍是粒度重采样；纹理层只提供全局素材拉伸质感。
+- 成本：批量 wsola 每刷新一次（~43ms @48k 默认），低频可接受；纹理 Vec 刷新有分配（零分配原则宽松项）。
 
 ## 10. 性能规则
 
@@ -142,14 +143,14 @@
   - `particle.rs` — 粒子状态机（含 envelope/lifetime/滤波状态）
   - `spawner.rs` — 出生规则与调度（FreeRun / Beats）
   - `position_mod.rs` — 位置调制源（固定/LFO/随机/峰值跟随）+ 平滑
-  - `texture.rs` — WSOLA 纹理层（v2）
+  - `texture.rs` — WSOLA 纹理层（v2 ✅）：滑动窗口 tap + 定时拉伸 + 交叉淡化
 - 接口：实现 `Effect<CHANNELS>`；通过 `ProcessContext` 取 `sample_rate` / `tempo` / 传输信息。
 
 ## 12. 里程碑
 
 - **v0 ✅**：mono 粒子云 —— 读点(三次插值) + 位置平滑 + envelope(-60dB) + 出生规则(等差+抖动+指数衰减) + 成本验证。
 - **v1 ✅**：串行反馈（`feedback_delay` 注入点 + 阻尼 + soft-clip）+ 峰值跟随 position（`position_mode=3`，周期更新近窗峰值）。
-- **v2 ⏳**：WSOLA 纹理层 + BPM sync + stereo + UI + CLAP 导出。
+- **v2**：WSOLA 纹理层 ✅ + BPM sync ⏳ + stereo ⏳ + UI/CLAP ⏳。
 
 ## 13. 待定项 / TODO
 
@@ -157,4 +158,4 @@
 - 峰值跟随目前取近窗全局峰值；如需"当前位置附近局部峰值吸附"（用户原话），加局部搜索模式。
 - 反馈 t 边缘与插值窗口的读写混叠文档。
 - BPM reset / transport 重启策略细节。
-- 纹理层交叉淡化参数。
+- ~~纹理层交叉淡化参数~~ ✅（`texture_crossfade_ms`）。

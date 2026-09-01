@@ -11,6 +11,7 @@ use crate::{
     position_mod::PositionMod,
     rng::SplitMix64,
     spawner::Spawner,
+    texture::Texture,
 };
 
 /// Fixed pool capacity of the slot map (Architecture.md sec.10: 64~256).
@@ -23,13 +24,14 @@ pub const DEFAULT_POOL_CAPACITY: usize = 256;
 /// 1. dry input pushed at the write head;
 /// 2. spawner rules decide whether a particle is born (arithmetic position
 ///    sequence + jitter + exponential strength decay);
-/// 3. every live particle reads the history at its smoothed position with
-///    cubic interpolation, applies playback rate, IIR-Hilbert frequency
-///    shift, the envelope, and writes feedback back into the history (v1,
-///    serial semantics);
+/// 3. every live particle reads the history (optionally blended with the
+///    WSOLA texture layer, v2) at its smoothed position with cubic
+///    interpolation, applies playback rate, IIR-Hilbert frequency shift, the
+///    envelope, and writes feedback back into the history (v1, serial
+///    semantics);
 /// 4. output = dry * input + wet.
 ///
-/// No WSOLA texture layer and no BPM sync yet.
+/// No BPM sync yet.
 #[derive(Parameters)]
 pub struct ParticulaEngine {
     // --- live-tweakable parameters (host-visible) ---
@@ -105,9 +107,24 @@ pub struct ParticulaEngine {
     #[range(min = 0.0, max = 20000.0)]
     pub feedback_damping_hz: f32,
 
+    // WSOLA texture layer (v2).
+    #[range(min = 0.0, max = 1.0)]
+    pub texture_blend: f32,
+    #[range(min = 20.0, max = 2000.0)]
+    pub texture_window_ms: f32,
+    #[range(min = 5.0, max = 1000.0)]
+    pub texture_refresh_ms: f32,
+    #[range(min = 0.25, max = 4.0)]
+    #[logarithmic]
+    pub texture_stretch: f32,
+    #[range(min = 1.0, max = 200.0)]
+    pub texture_crossfade_ms: f32,
+
     // --- internal state (never host parameters) ---
     #[skip]
     history: RingBuffer<f32>,
+    #[skip]
+    texture: Texture,
     #[skip]
     slots: Vec<Option<Particle>>,
     #[skip]
@@ -170,7 +187,16 @@ impl ParticulaEngine {
             feedback_gain: 0.0,
             feedback_delay_ms: 40.0,
             feedback_damping_hz: 3000.0,
+            texture_blend: 0.35,
+            texture_window_ms: 85.0,
+            texture_refresh_ms: 43.0,
+            texture_stretch: 1.0,
+            texture_crossfade_ms: 12.0,
             history: RingBuffer::new(history_capacity.max(1)),
+            texture: Texture::new(
+                (0.085 * sample_rate as f32) as usize,
+                sample_rate.max(1),
+            ),
             slots: Vec::with_capacity(DEFAULT_POOL_CAPACITY),
             free: Vec::with_capacity(DEFAULT_POOL_CAPACITY),
             spawner: Spawner::new(),
@@ -324,6 +350,21 @@ impl Effect<1> for ParticulaEngine {
             self.next_peak_update = self.sample_count + update;
         }
 
+        // 3b. WSOLA texture layer: slide the tap, refresh on schedule.
+        let window_samples = ((self.texture_window_ms * sample_rate as f32 / 1000.0) as usize).max(64);
+        if window_samples != self.texture.window_capacity() {
+            self.texture.resize(window_samples);
+        }
+        let refresh = ((self.texture_refresh_ms * sample_rate as f32 / 1000.0) as usize).max(1);
+        let fade = ((self.texture_crossfade_ms * sample_rate as f32 / 1000.0) as usize).max(1);
+        self.texture.process(
+            &self.history,
+            self.texture_stretch,
+            refresh,
+            fade,
+            self.sample_count,
+        );
+
         // 4. particles: read, pitch, shift, envelope, sum; serial feedback
         //    writes into the history (Architecture.md sec.3.1: later
         //    particles see earlier ones' feedback this frame).
@@ -347,6 +388,8 @@ impl Effect<1> for ParticulaEngine {
             };
             match p.process(
                 history,
+                &self.texture,
+                self.texture_blend,
                 dt,
                 sample_count,
                 peak_t,

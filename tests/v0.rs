@@ -71,6 +71,7 @@ fn dc_input_reads_position_and_envelope() {
     let mut e = ParticulaEngine::new(1024, SR, 99);
     e.dry = 0.0;
     e.wet = 1.0;
+    e.texture_blend = 0.0; // pure history read test
     e.position_mode = 0; // fixed
     e.base_position = 0.25;
     e.position_step = 0.0;
@@ -112,6 +113,7 @@ fn single_particle_dies_and_output_goes_silent() {
     let mut e = ParticulaEngine::new(512, SR, 3);
     e.dry = 0.0;
     e.wet = 1.0;
+    e.texture_blend = 0.0; // pure history read test
     e.position_mode = 0;
     e.base_position = 0.75; // near the freshest end: readable soon after fill
     e.position_jitter = 0.0;

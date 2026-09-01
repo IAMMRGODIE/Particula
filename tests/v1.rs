@@ -82,6 +82,7 @@ fn feedback_changes_output_and_stays_bounded() {
     let mut off = ParticulaEngine::new(4096, SR, 11);
     off.dry = 0.4;
     off.wet = 1.0;
+    off.texture_blend = 0.0; // isolate the feedback path
     off.feedback_gain = 0.0;
     off.base_position = 0.9;
     off.position_jitter = 0.05;
@@ -93,6 +94,7 @@ fn feedback_changes_output_and_stays_bounded() {
     let mut on = ParticulaEngine::new(4096, SR, 11);
     on.dry = 0.4;
     on.wet = 1.0;
+    on.texture_blend = 0.0; // isolate the feedback path
     on.feedback_gain = 0.7;
     // Keep the injection point inside the particles' read region
     // (base 0.9 ± jitter): delay 8 ms -> h = 4095 - 384 = 3711, well inside.
@@ -123,6 +125,7 @@ fn no_self_oscillation_on_silence() {
     let mut e = ParticulaEngine::new(1024, SR, 42);
     e.dry = 0.0;
     e.wet = 1.0;
+    e.texture_blend = 0.0; // isolate the feedback path
     e.feedback_gain = 0.9;
     e.feedback_delay_ms = 20.0;
     e.feedback_damping_hz = 2000.0;
@@ -144,6 +147,7 @@ fn peak_follow_mode_runs_and_reads() {
     let mut e = ParticulaEngine::new(2048, SR, 7);
     e.dry = 0.0;
     e.wet = 1.0;
+    e.texture_blend = 0.0; // isolate the peak-follow path
     e.position_mode = 3; // PeakFollow
     e.peak_window_ms = 40.0;
     e.peak_update_ms = 5.0;

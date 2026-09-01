@@ -12,6 +12,7 @@ use crate::{
     history::add_at,
     position_mod::PositionMod,
     rng::SplitMix64,
+    texture::Texture,
 };
 
 /// Cheap smooth soft-clip for the feedback write (part of the stability
@@ -125,10 +126,14 @@ impl Particle {
     /// particle's modulation source is PositionMod::PeakFollow).
     /// feedback_delay_samples and feedback_lp_a are the live feedback
     /// injection point and damping coefficient from the engine.
+    /// texture/texture_blend blend the WSOLA texture layer into the read
+    /// (0 = history only, per Architecture.md sec.9).
     #[allow(clippy::too_many_arguments)]
     pub fn process(
         &mut self,
         history: &mut RingBuffer<f32>,
+        texture: &Texture,
+        texture_blend: f32,
         dt: f32,
         sample_count: usize,
         peak_t: f32,
@@ -158,7 +163,8 @@ impl Particle {
         self.drift += self.playback_rate / history.capacity() as f32;
         self.position = (smoothed + self.drift).rem_euclid(1.0);
 
-        let mut s = history.sample(self.position, 0);
+        let mut s = history.sample(self.position, 0) * (1.0 - texture_blend)
+            + texture.sample(self.position) * texture_blend;
 
         // Envelope: linear attack, then exponential decay.
         if self.attack_elapsed < self.attack_samples {

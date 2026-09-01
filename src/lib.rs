@@ -14,6 +14,7 @@ pub mod particle;
 pub mod position_mod;
 pub mod rng;
 pub mod spawner;
+pub mod texture;
 
 pub use engine::ParticulaEngine;
 pub use history::{add_at, recent_peak_position};
@@ -21,3 +22,4 @@ pub use particle::Particle;
 pub use position_mod::PositionMod;
 pub use rng::SplitMix64;
 pub use spawner::{Spawn, Spawner};
+pub use texture::Texture;

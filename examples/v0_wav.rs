@@ -60,6 +60,7 @@ fn main() -> std::io::Result<()> {
     let mut engine = ParticulaEngine::new(1 << 15, SR, 0xC0FFEE);
     engine.dry = 0.35;
     engine.wet = 0.9;
+    engine.texture_blend = 0.0; // v0 demo stays a pure particle cloud
     engine.max_particles = 96.0;
     engine.spawn_interval_ms = 45.0;
     engine.base_position = 0.45;

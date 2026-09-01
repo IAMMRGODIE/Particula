@@ -1,14 +1,13 @@
-//! v1 demo: same phrase as v0, but with serial feedback (delay 0..N) and
-//! peak-follow position. Compares against the v0 result by writing a
-//! separate file: particula_v1.wav.
+//! v2 demo: the full engine - particle cloud + serial feedback + peak-follow
+//! positions + WSOLA texture layer. Writes particula_v2.wav.
 //!
-//! Run: cargo run --release --offline --example v1_feedback
+//! Run: cargo run --release --offline --example v2_texture
 
 use i_am_dsp::{Effect, ProcessContext};
 use particula::{ParticulaEngine, SplitMix64};
 
 const SR: usize = 48_000;
-const SECONDS: usize = 5;
+const SECONDS: usize = 6;
 
 /// A tiny bit of test input with some sustain: two detuned saws + tremolo.
 fn generate_input(seconds: usize) -> Vec<f32> {
@@ -57,33 +56,39 @@ fn write_wav_f32(path: &str, sample_rate: u32, samples: &[f32]) -> std::io::Resu
 fn main() -> std::io::Result<()> {
     let input = generate_input(SECONDS);
 
-    let mut engine = ParticulaEngine::new(1 << 16, SR, 0xBEEF);
-    engine.dry = 0.35;
-    engine.wet = 0.9;
-    engine.texture_blend = 0.0; // v1 demo stays feedback/peak only
+    let mut engine = ParticulaEngine::new(1 << 16, SR, 0xDEC0DE);
+    engine.dry = 0.30;
+    engine.wet = 0.95;
     engine.max_particles = 96.0;
-    engine.spawn_interval_ms = 45.0;
-    engine.base_position = 0.7;
-    engine.position_jitter = 0.03;
-    engine.gain_decay_ratio = 0.88;
+    engine.spawn_interval_ms = 40.0;
+    engine.base_position = 0.75;
+    engine.position_jitter = 0.04;
+    engine.gain_decay_ratio = 0.9;
     engine.initial_gain = 0.5;
-    engine.attack_ms = 5.0;
-    engine.lifetime_ms_min = 120.0;
-    engine.lifetime_ms_max = 900.0;
+    engine.attack_ms = 6.0;
+    engine.lifetime_ms_min = 100.0;
+    engine.lifetime_ms_max = 1000.0;
     engine.pitch_min = 0.5;
-    engine.pitch_max = 1.6;
-    engine.freq_shift_min = -90.0;
-    engine.freq_shift_max = 90.0;
-    engine.position_smooth_ms = 25.0;
+    engine.pitch_max = 1.5;
+    engine.freq_shift_min = -80.0;
+    engine.freq_shift_max = 80.0;
+    engine.position_smooth_ms = 20.0;
 
     // v1: feedback + peak-follow position.
     engine.position_mode = 3; // PeakFollow
     engine.peak_window_ms = 120.0;
     engine.peak_update_ms = 25.0;
     engine.peak_threshold = 0.005;
-    engine.feedback_gain = 0.55;
-    engine.feedback_delay_ms = 60.0;
-    engine.feedback_damping_hz = 3500.0;
+    engine.feedback_gain = 0.45;
+    engine.feedback_delay_ms = 18.0;
+    engine.feedback_damping_hz = 2500.0;
+
+    // v2: WSOLA texture layer.
+    engine.texture_blend = 0.65;
+    engine.texture_window_ms = 120.0;
+    engine.texture_refresh_ms = 60.0;
+    engine.texture_stretch = 0.7; // down-stretch: fills/softens the cloud
+    engine.texture_crossfade_ms = 15.0;
 
     let mut ctx: Box<dyn ProcessContext> = Box::new(());
     let mut out = Vec::with_capacity(input.len());
@@ -95,12 +100,12 @@ fn main() -> std::io::Result<()> {
 
     let peak = out.iter().fold(0.0_f32, |a, &s| a.max(s.abs()));
     let rms = (out.iter().map(|&s| s * s).sum::<f32>() / out.len() as f32).sqrt();
-    write_wav_f32("particula_v1.wav", SR as u32, &out)?;
+    write_wav_f32("particula_v2.wav", SR as u32, &out)?;
 
-    println!("written particula_v1.wav");
-    println!("  samples: {}", out.len());
-    println!("  peak:    {peak:.3}");
-    println!("  rms:     {rms:.4}");
-    println!("  spawned: {}", engine.spawned());
+    println!("written particula_v2.wav");
+    println!("  samples:  {}", out.len());
+    println!("  peak:     {peak:.3}");
+    println!("  rms:      {rms:.4}");
+    println!("  spawned:  {}", engine.spawned());
     Ok(())
 }
