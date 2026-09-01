@@ -204,20 +204,22 @@ impl<const CHANNELS: usize> ParticulaEngine<CHANNELS> {
     pub fn new(history_capacity: usize, sample_rate: usize, seed: u64) -> Self {
         Self {
             dry: 1.0,
-            wet: 0.8,
-            spawn_interval_ms: 40.0,
+            wet: 0.85,
+            spawn_interval_ms: 30.0,
             max_particles: 64.0,
             spawn_sync: false,
             spawn_interval_beats: 0.25,
             fallback_bpm: 120.0,
-            base_position: 0.5,
+            // Near-live audio: the cloud is audible from the first second
+            // instead of waiting for half the history buffer to fill.
+            base_position: 0.9,
             position_step: 0.0,
             position_jitter: 0.02,
             gain_decay_ratio: 0.9,
             initial_gain: 0.5,
             attack_ms: 10.0,
-            lifetime_ms_min: 200.0,
-            lifetime_ms_max: 1500.0,
+            lifetime_ms_min: 100.0,
+            lifetime_ms_max: 1200.0,
             pitch_min: 0.5,
             pitch_max: 1.5,
             freq_shift_min: -120.0,

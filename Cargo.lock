@@ -781,6 +781,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "clack-host"
+version = "0.1.0"
+dependencies = [
+ "clack-common",
+ "clap-sys",
+ "libloading",
+]
+
+[[package]]
 name = "clack-plugin"
 version = "0.1.0"
 dependencies = [
@@ -3581,6 +3590,7 @@ dependencies = [
 name = "particula_plugin"
 version = "0.1.0"
 dependencies = [
+ "clack-host",
  "i_am_dsp",
  "i_am_dsp_iced",
  "i_am_plugin",
