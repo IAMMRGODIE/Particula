@@ -224,8 +224,14 @@ impl i_am_dsp_iced::SyncedView for ParticulaView {
                 self.last_frame = Some(now);
                 self.animate(dt);
             }
-            ParticulaMessage::ToggleLeft => self.panel_left.target = !self.panel_left.target,
-            ParticulaMessage::ToggleRight => self.panel_right.target = !self.panel_right.target,
+            ParticulaMessage::ToggleLeft => {
+                self.panel_left.target = !self.panel_left.target;
+                self.panel_right.target = false;
+            }
+            ParticulaMessage::ToggleRight => {
+                self.panel_right.target = !self.panel_right.target;
+                self.panel_left.target = false;
+            }
             ParticulaMessage::ShowAbout(show) => self.about = *show,
             ParticulaMessage::Randomize => randomize_all(&self.param_map),
             ParticulaMessage::MasterEnabled(v) => {
@@ -323,7 +329,7 @@ impl ParticulaView {
                     .on_press(ParticulaMessage::ShowAbout(true))
                     .style(flat_button),
                 text("P A R T I C U L A").font(DISPLAY).size(15).color(TEXT),
-                iced::widget::space(),
+                iced::widget::space().width(Length::Fill),
                 text("WET").font(MONO).size(8).color(TEXT_FAINT),
                 self.mini_slider("wet"),
                 text("DRY").font(MONO).size(8).color(TEXT_FAINT),
@@ -334,7 +340,7 @@ impl ParticulaView {
             .spacing(10),
         )
         .width(Length::Fill)
-        .padding([12, 24])
+        .padding([10, 14])
         .style(panel_style(None, LINE, 0.0, 0.0));
 
         // ---- centre sigil: canvas + left/right click zones (half layout) ----
@@ -374,9 +380,14 @@ impl ParticulaView {
             .width(Length::Fill)
             .height(Length::Fill);
 
-        // ---- side panels (faded in/out) ----
-        let left = self.side_panel("01 · GENERATION", LEFT_PARAMS, self.panel_left);
-        let right = self.side_panel("02 · MATERIAL / MODULATION", RIGHT_PARAMS, self.panel_right);
+        // ---- side panel (exactly one visible at a time) ----
+        let hidden: Element<'static, ParticulaMessage> =
+            iced::widget::space().width(Length::Fixed(0.0)).into();
+        let (left, right) = if self.panel_left.opacity >= self.panel_right.opacity {
+            (self.side_panel("01 · GENERATION", LEFT_PARAMS, self.panel_left), hidden)
+        } else {
+            (hidden, self.side_panel("02 · MATERIAL / MODULATION", RIGHT_PARAMS, self.panel_right))
+        };
 
         let body = row![left, centre, right].spacing(0);
 
@@ -388,13 +399,13 @@ impl ParticulaView {
                     .font(MONO)
                     .size(9)
                     .color(TEXT_FAINT),
-                iced::widget::space(),
+                iced::widget::space().width(Length::Fill),
                 button(text("RANDOMIZE").font(MONO).size(9).color(TEXT_DIM))
                     .on_press(ParticulaMessage::Randomize)
                     .style(flat_button),
             ]
             .align_y(iced::Alignment::Center)
-            .padding([0, 24]),
+            .padding([0, 14]),
         )
         .width(Length::Fill)
         .style(panel_style(Some(BG_PANEL), LINE, 1.0, 0.0));
@@ -402,6 +413,7 @@ impl ParticulaView {
         let base = container(column![header, body, footer].spacing(0))
             .width(Length::Fill)
             .height(Length::Fill)
+            .padding([12, 18])
             .style(panel_style(Some(BG), Color::TRANSPARENT, 0.0, 0.0));
 
         // ---- optional About overlay ----
@@ -427,6 +439,8 @@ impl ParticulaView {
             )
             .width(Length::Fill)
             .height(Length::Fill)
+            .align_x(iced::Alignment::Center)
+            .align_y(iced::Alignment::Center)
             .style(panel_style(Some(BG), LINE, 1.0, 0.0))
             .into();
             return iced::widget::stack![base, overlay].into();
@@ -482,6 +496,9 @@ impl ParticulaView {
         ids: &'static [&'static str],
         anim: PanelAnim,
     ) -> Element<'static, ParticulaMessage> {
+        if anim.opacity < 0.03 {
+            return iced::widget::space().width(Length::Fixed(0.0)).into();
+        }
         let rows = ids
             .iter()
             .map(|id| self.param_row(id))
@@ -492,7 +509,7 @@ impl ParticulaView {
                 iced::widget::space().height(4),
                 column(rows).spacing(2),
             ]
-            .padding(18),
+            .padding([18, 22]),
         )
         .width(Length::Fixed((anim.opacity * 210.0 + 18.0).max(18.0)))
         .style(panel_style(None, LINE, 1.0, 0.0))
@@ -526,7 +543,7 @@ impl ParticulaView {
             .align_y(iced::Alignment::Center)
             .spacing(8),
         )
-        .padding([8, 0])
+        .padding([8, 14])
         .style(panel_style(None, LINE, 1.0, 0.0))
         .into()
     }
