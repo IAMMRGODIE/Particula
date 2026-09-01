@@ -25,7 +25,7 @@ use iced::{
 };
 use i_am_dsp::prelude::{AtomicValue, ParamMap, SetValue};
 
-use particula::SpawnEvent;
+use particula::{SpawnEvent, SplitMix64};
 
 // ------------------------------ constants -----------------------------------
 pub const TEXT: Color = Color::from_rgb(0.93, 0.93, 0.93);
@@ -118,20 +118,34 @@ pub fn label(id: &str) -> String {
         "spawn_interval_ms" => "Interval",
         "max_particles" => "Pool",
         "reverse_chance" => "Reverse",
+        "spawn_interval_beats" => "Beats",
+        "fallback_bpm" => "Fallback",
         "lfo_rate_hz" => "LFO Rate",
         "lfo_depth" => "LFO Depth",
         "position_smooth_ms" => "Smooth",
         "texture_blend" => "Texture",
+        "texture_window_ms" => "Window",
+        "texture_refresh_ms" => "Refresh",
         "texture_stretch" => "Stretch",
-        "pitch_max" => "Pitch",
+        "texture_crossfade_ms" => "Fade",
+        "pitch_min" => "Pitch Min",
+        "pitch_max" => "Pitch Max",
+        "freq_shift_min" => "Shift Min",
+        "freq_shift_max" => "Shift Max",
         "feedback_gain" => "Feedback",
         "feedback_delay_ms" => "FB Delay",
+        "feedback_damping_hz" => "FB Damp",
+        "lifetime_ms_min" => "Life Min",
+        "lifetime_ms_max" => "Life Max",
+        "attack_ms" => "Attack",
         "base_position" => "Base Pos",
         "position_step" => "Pos Step",
         "position_jitter" => "Jitter",
         "gain_decay_ratio" => "Decay",
         "min_gain_ratio" => "Gain Floor",
         "initial_gain" => "Init Gain",
+        "pan_min" => "Pan Min",
+        "pan_max" => "Pan Max",
         "wet" => "Wet",
         "dry" => "Dry",
         _ => id,
@@ -248,6 +262,8 @@ struct PanelAnim {
     opacity: f32,
     /// Current page index within the panel.
     page: usize,
+    /// Page-switch animation cursor: 1 right after a switch, easing to 0.
+    fade: f32,
 }
 
 impl PanelAnim {
@@ -256,6 +272,7 @@ impl PanelAnim {
             target: false,
             opacity: 0.0,
             page: 0,
+            fade: 0.0,
         }
     }
     fn update(&mut self, dt: f32) {
@@ -289,6 +306,8 @@ pub struct ParticulaView {
     panel_right: PanelAnim,
     /// Whether the About overlay is open.
     about: bool,
+    /// Randomize targets being eased into (id, target) on each tick.
+    randomize_pending: Vec<(String, f32)>,
 
     last_frame: Option<Instant>,
 }
@@ -322,9 +341,14 @@ impl i_am_dsp_iced::SyncedView for ParticulaView {
                 } else {
                     &mut self.panel_right
                 };
-                anim.page = *page;
+                if anim.page != *page {
+                    anim.page = *page;
+                    anim.fade = 1.0;
+                }
             }
-            ParticulaMessage::Randomize => randomize_all(&self.param_map),
+            ParticulaMessage::Randomize => {
+                self.randomize_pending = random_targets(&self.param_map);
+            }
             ParticulaMessage::MasterEnabled(v) => {
                 self.param_map.set("enabled", *v, std::sync::atomic::Ordering::Relaxed);
             }
@@ -358,6 +382,7 @@ impl ParticulaView {
             panel_left: PanelAnim::hidden(),
             panel_right: PanelAnim::hidden(),
             about: false,
+            randomize_pending: Vec::new(),
             last_frame: None,
         }
     }
@@ -365,6 +390,38 @@ impl ParticulaView {
     /// Advance the animation by dt: ingest spawn events, fade dots, spin rings,
     /// tween panels.
     fn animate(&mut self, dt: f32) {
+        // 0. Ease randomize targets into the map (no instant full-blown jump).
+        if !self.randomize_pending.is_empty() {
+            let mut i = 0usize;
+            while i < self.randomize_pending.len() {
+                let (id, target) = self.randomize_pending[i].clone();
+                let cur = match self
+                    .param_map
+                    .get(&id)
+                    .map(|av| av.load(std::sync::atomic::Ordering::Relaxed))
+                {
+                    Some(SetValue::Float(v)) => v,
+                    Some(SetValue::Int(v)) => v as f32,
+                    Some(SetValue::Bool(v)) => {
+                        if v {
+                            1.0
+                        } else {
+                            0.0
+                        }
+                    }
+                    _ => target,
+                };
+                let next = cur + (target - cur) * 0.25;
+                if (target - next).abs() < (target - cur).abs() * 0.02 + 1e-4 {
+                    self.param_map.set(&id, target, std::sync::atomic::Ordering::Relaxed);
+                    self.randomize_pending.remove(i);
+                } else {
+                    self.param_map.set(&id, next, std::sync::atomic::Ordering::Relaxed);
+                    i += 1;
+                }
+            }
+        }
+
         // 1. Ingest any spawn events posted by the audio thread.
         {
             let rx = self.spawn_rx.lock().expect("spawn receiver lock");
@@ -397,9 +454,11 @@ impl ParticulaView {
             *phase += RING_SPEED[r] * dt;
         }
 
-        // 4. Tween the panels.
+        // 4. Tween the panels + ease page-switch cursors.
         self.panel_left.update(dt);
         self.panel_right.update(dt);
+        self.panel_left.fade = (self.panel_left.fade - dt * 5.5).max(0.0);
+        self.panel_right.fade = (self.panel_right.fade - dt * 5.5).max(0.0);
     }
 
     fn live(&self) -> usize {
@@ -561,7 +620,7 @@ impl ParticulaView {
         })
         .step(nice_step(s.min, s.max))
         .width(Length::Fixed(90.0))
-        .style(slider_style)
+        .style(slider_style(1.0))
         .into()
     }
 
@@ -604,11 +663,15 @@ impl ParticulaView {
         let mode = snapshot("position_mode", &self.param_map)
             .map(|s| s.value as usize)
             .unwrap_or(1);
+        // Page-transition cursor: fade 1 -> 0 smoothly (content alpha +
+        // panel width expand). Rows fade in/out with the transition.
+        let a = 1.0 - anim.fade * 0.72;
+        let w = 300.0 * (0.40 + 0.60 * (1.0 - anim.fade));
         let rows = page
             .1
             .iter()
             .filter(|(_, cond)| *cond == 0 || usize::from(*cond) == mode + 1)
-            .map(|(id, _)| self.param_row(id))
+            .map(|(id, _)| self.param_row(id, a))
             .collect::<Vec<_>>();
 
         // Page picker row (top of the panel).
@@ -643,18 +706,18 @@ impl ParticulaView {
                     iced::widget::space().width(Length::Fill),
                 ]
                 .align_y(iced::Alignment::Center),
-                row(pickers).spacing(4),
+                row(pickers).spacing(6),
                 iced::widget::space().height(4),
-                column(page_rows).spacing(2),
+                column(page_rows).spacing(6),
             ]
-            .padding([18, 22]),
+            .padding([20, 24]),
         )
-        .width(Length::Fixed((anim.opacity * 300.0 + 14.0).max(14.0)))
+        .width(Length::Fixed((anim.opacity * w + 14.0).max(14.0)))
         .style(panel_style(None, LINE, 1.0, 0.0))
         .into()
     }
 
-    fn param_row(&self, id: &'static str) -> Element<'static, ParticulaMessage> {
+    fn param_row(&self, id: &'static str, a: f32) -> Element<'static, ParticulaMessage> {
         let Some(snap) = snapshot(id, &self.param_map) else {
             return iced::widget::space().into();
         };
@@ -664,18 +727,18 @@ impl ParticulaView {
                 text(label(id))
                     .font(MONO)
                     .size(9)
-                    .color(TEXT_DIM)
+                    .color(Color::from_rgba(0.60, 0.60, 0.60, a))
                     .width(Length::Fixed(76.0)),
                 slider(snap.min..=snap.max, snap.value, move |v| {
                     map.set(id, v, std::sync::atomic::Ordering::Relaxed);
                     ParticulaMessage::Tick
                 })
                 .step(nice_step(snap.min, snap.max))
-                .style(slider_style),
+                .style(slider_style(a)),
                 text(format!("{:.2}", snap.value))
                     .font(MONO)
                     .size(9)
-                    .color(TEXT_FAINT)
+                    .color(Color::from_rgba(0.36, 0.36, 0.36, a))
                     .width(Length::Fixed(48.0)),
             ]
             .align_y(iced::Alignment::Center)
@@ -688,14 +751,13 @@ impl ParticulaView {
 }
 
 // -------------------------------- randomize ---------------------------------
-fn randomize_all(map: &ParamMap) {
-    use std::sync::atomic::Ordering;
-    enum Plan {
-        Float(f32),
-        Int(i32),
-        Bool(bool),
-    }
-    let mut rng = tiny_rng();
+/// Gathers a shuffled target value for every engine parameter (except the
+/// header trio) using the seeded SplitMix64 — the previous ad-hoc RNG was
+/// biased toward the top of the range, so Randomize appeared to max everything
+/// out. The caller eases these targets into the map over a few ticks.
+fn random_targets(map: &ParamMap) -> Vec<(String, f32)> {
+    let mut rng = SplitMix64::new(0xC0FFEE);
+    let mut out = Vec::new();
     for i in 0..map.len() {
         let Some(id) = map.query_param_id(i).map(|s| s.to_string()) else {
             continue;
@@ -703,51 +765,39 @@ fn randomize_all(map: &ParamMap) {
         if id == "dry" || id == "wet" || id == "enabled" {
             continue;
         }
-        // Read an owned value plan, then set it (avoids holding a borrow of
-        // `map` while calling `map.set`).
-        let plan = match &*map.get_by_index(i).expect("param") {
+        let Some(av) = map.get_by_index(i) else {
+            continue;
+        };
+        let value = match &*av {
             AtomicValue::Float {
                 range,
                 logarithmic,
                 ..
             } => {
                 let (lo, hi) = (*range.start(), *range.end());
-                let v = if *logarithmic && lo > 0.0 {
-                    lo * (hi / lo).powf(rng())
+                if *logarithmic && lo > 0.0 {
+                    lo * (hi / lo).powf(rng.next_f32())
                 } else {
-                    lo + (hi - lo) * rng()
-                };
-                Plan::Float(v)
+                    rng.range(lo, hi)
+                }
             }
             AtomicValue::Int { range, .. } => {
                 let (lo, hi) = (*range.start(), *range.end());
                 let span = (hi - lo) as u32 + 1;
-                Plan::Int(lo + (rng() * span as f32) as i32)
+                (lo + (rng.next_f32() * span as f32) as i32) as f32
             }
-            AtomicValue::Bool { .. } => Plan::Bool(rng() > 0.5),
+            AtomicValue::Bool { .. } => {
+                if rng.next_f32() > 0.5 {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
             _ => continue,
         };
-        match plan {
-            Plan::Float(v) => {
-                map.set(&id, v, Ordering::Relaxed);
-            }
-            Plan::Int(v) => {
-                map.set(&id, v, Ordering::Relaxed);
-            }
-            Plan::Bool(v) => {
-                map.set(&id, v, Ordering::Relaxed);
-            }
-        }
+        out.push((id, value));
     }
-}
-
-fn tiny_rng() -> impl FnMut() -> f32 {
-    let mut x: u64 = 0x9E3779B97F4A7C15;
-    move || {
-        x ^= x << 7;
-        x ^= x >> 9;
-        (x as f32) * (1.0 / u32::MAX as f32).abs()
-    }
+    out
 }
 
 // -------------------------------- styling -----------------------------------
@@ -828,23 +878,25 @@ fn flat_button(_: &iced::Theme, status: button::Status) -> button::Style {
     }
 }
 
-fn slider_style(_: &iced::Theme, _: slider::Status) -> slider::Style {
-    use iced::widget::slider::{Handle, HandleShape, Rail};
-    slider::Style {
-        rail: Rail {
-            backgrounds: (
-                iced::Background::Color(Color::from_rgba(1.0, 1.0, 1.0, 0.28)),
-                iced::Background::Color(Color::from_rgba(1.0, 1.0, 1.0, 0.10)),
-            ),
-            width: 2.0,
-            border: iced::Border::default(),
-        },
-        handle: Handle {
-            shape: HandleShape::Circle { radius: 5.0 },
-            background: iced::Background::Color(TEXT),
-            border_width: 0.0,
-            border_color: iced::Color::TRANSPARENT,
-        },
+fn slider_style(a: f32) -> impl Fn(&iced::Theme, slider::Status) -> slider::Style + 'static {
+    move |_: &iced::Theme, _: slider::Status| {
+        use iced::widget::slider::{Handle, HandleShape, Rail};
+        slider::Style {
+            rail: Rail {
+                backgrounds: (
+                    iced::Background::Color(Color::from_rgba(1.0, 1.0, 1.0, 0.28 * a)),
+                    iced::Background::Color(Color::from_rgba(1.0, 1.0, 1.0, 0.10 * a)),
+                ),
+                width: 2.0,
+                border: iced::Border::default(),
+            },
+            handle: Handle {
+                shape: HandleShape::Circle { radius: 5.0 },
+                background: iced::Background::Color(Color::from_rgba(0.93, 0.93, 0.93, a)),
+                border_width: 0.0,
+                border_color: iced::Color::TRANSPARENT,
+            },
+        }
     }
 }
 
