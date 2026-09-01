@@ -1,24 +1,33 @@
-//! Particula control surface — styled after the HOMOLOGY sigil-system site.
+//! Particula control surface — a living HOMOLOGY sigil.
 //!
-//! The view holds the shared atomic ParamMap + counter Arcs and reads/writes
-//! them directly on every frame (the wavetable_synth pattern): sliders write
-//! straight into the map in their on_change closure, so nothing depends on the
-//! plugin's message routing. Stats and preset cards work the same way.
+//! Animation structure:
+//!  - The engine pushes a SpawnEvent per born particle over a crossbeam
+//!    channel. The view drains it on every tick, allocating a circular dot
+//!    slot (three concentric rings, 12 slots each) and fading its brightness
+//!    as the particle ages toward its lifetime.
+//!  - Rings rotate at different angular speeds (differential rotation).
+//!  - Clicking the left/right half of the sigil toggles a parameter panel that
+//!    fades in/out via a per-frame lerp.
+//!  - A header About overlay and a footer randomize button are plain state.
+//! All reads/writes go through the shared atomic ParamMap + a spawn-event
+//! channel — never shared mutable state with the audio thread.
 
-use std::sync::{
-    Arc,
-    atomic::Ordering,
+use std::{
+    sync::{Arc, Mutex},
+    time::Instant,
 };
 
+use crossbeam_channel::Receiver;
 use iced::{
     Color, Element, Font, Length,
     font::Family,
-    widget::{button, canvas, canvas::Path, column, container, row, slider, text},
+    widget::{button, canvas, column, container, row, slider, text},
 };
-
 use i_am_dsp::prelude::{AtomicValue, ParamMap, SetValue};
 
-// ------------------------- palette (HOMOLOGY tokens) -------------------------
+use particula::SpawnEvent;
+
+// ------------------------------ constants -----------------------------------
 pub const TEXT: Color = Color::from_rgb(0.93, 0.93, 0.93);
 pub const TEXT_DIM: Color = Color::from_rgb(0.60, 0.60, 0.60);
 pub const TEXT_FAINT: Color = Color::from_rgb(0.36, 0.36, 0.36);
@@ -33,12 +42,24 @@ pub const DISPLAY: Font = Font {
     ..Font::DEFAULT
 };
 
+/// Number of concentric rings on the sigil.
+const RINGS: usize = 3;
+/// Dots on each ring (a circular slot buffer per ring).
+const DOTS_PER_RING: usize = 12;
+/// Angular velocities of each ring (radians / second), inner ring fastest.
+const RING_SPEED: [f32; RINGS] = [0.45, 0.22, -0.12];
+/// Fade-in/out time constant (per second, larger = snappier).
+const PANEL_TAU: f32 = 7.0;
+
 // ------------------------------- messages -----------------------------------
 #[derive(Debug, Clone)]
 pub enum ParticulaMessage {
-    /// Kept for CLI/structure compatibility; the surface writes the map
-    /// directly instead of routing through messages.
     Param { id: &'static str, value: f32 },
+    ToggleLeft,
+    ToggleRight,
+    ShowAbout(bool),
+    Randomize,
+    MasterEnabled(bool),
     Tick,
 }
 
@@ -55,7 +76,6 @@ impl i_am_dsp_iced::Message for ParticulaMessage {
 }
 
 // --------------------------- parameter snapshot ------------------------------
-/// One parameter read live from the shared atomic map.
 #[derive(Debug, Clone, Copy)]
 pub struct ParamSnapshot {
     pub value: f32,
@@ -63,82 +83,6 @@ pub struct ParamSnapshot {
     pub max: f32,
 }
 
-/// The parameter ids the surface exposes, grouped into panels.
-pub const GROUPS: &[(&str, &[&str])] = &[
-    ("01 · Spawn", &["spawn_interval_ms", "max_particles", "reverse_chance"]),
-    ("02 · Position", &["lfo_rate_hz", "lfo_depth", "position_smooth_ms"]),
-    ("03 · Tone", &["texture_blend", "texture_stretch", "pitch_max"]),
-    ("04 · Output", &["feedback_gain", "feedback_delay_ms", "wet"]),
-];
-
-/// Short display names for the exposed parameter ids.
-pub const LABELS: &[(&str, &str)] = &[
-    ("spawn_interval_ms", "Interval"),
-    ("max_particles", "Pool"),
-    ("reverse_chance", "Reverse"),
-    ("lfo_rate_hz", "LFO Rate"),
-    ("lfo_depth", "LFO Depth"),
-    ("position_smooth_ms", "Smooth"),
-    ("texture_blend", "Texture"),
-    ("texture_stretch", "Stretch"),
-    ("pitch_max", "Pitch"),
-    ("feedback_gain", "Feedback"),
-    ("feedback_delay_ms", "FB Delay"),
-    ("wet", "Wet"),
-];
-
-pub fn label(id: &str) -> &str {
-    LABELS
-        .iter()
-        .find(|(k, _)| *k == id)
-        .map(|(_, v)| *v)
-        .unwrap_or(id)
-}
-
-/// Presets: clickable constellation cards (HOMOLOGY .preset).
-pub const PRESETS: &[(&str, &[(&str, f32)])] = &[
-    (
-        "Halo Chamber",
-        &[
-            ("wet", 0.95),
-            ("feedback_gain", 0.5),
-            ("texture_blend", 0.7),
-            ("texture_stretch", 0.7),
-            ("reverse_chance", 0.15),
-        ],
-    ),
-    (
-        "Reverse Rain",
-        &[
-            ("reverse_chance", 0.85),
-            ("spawn_interval_ms", 25.0),
-            ("lifetime_ms_max", 900.0),
-            ("feedback_gain", 0.35),
-            ("lfo_depth", 0.3),
-        ],
-    ),
-    (
-        "Metal Swarm",
-        &[
-            ("pitch_max", 2.2),
-            ("freq_shift_min", -400.0),
-            ("freq_shift_max", 400.0),
-            ("spawn_interval_ms", 14.0),
-            ("wet", 1.0),
-            ("dry", 0.25),
-        ],
-    ),
-    (
-        "Deep Drift",
-        &[
-            ("texture_blend", 0.9),
-            ("texture_stretch", 0.45),
-            ("lfo_depth", 0.1),
-        ],
-    ),
-];
-
-/// Reads one parameter out of the shared atomic map.
 pub fn snapshot(id: &'static str, map: &ParamMap) -> Option<ParamSnapshot> {
     let av = map.get(id)?;
     let range = match &*av {
@@ -147,7 +91,7 @@ pub fn snapshot(id: &'static str, map: &ParamMap) -> Option<ParamSnapshot> {
         AtomicValue::Bool { .. } => (0.0, 1.0),
         _ => (0.0, 0.0),
     };
-    let value = match av.load(Ordering::Relaxed) {
+    let value = match av.load(std::sync::atomic::Ordering::Relaxed) {
         SetValue::Float(v) => v,
         SetValue::Int(v) => v as f32,
         SetValue::Bool(v) => {
@@ -166,17 +110,128 @@ pub fn snapshot(id: &'static str, map: &ParamMap) -> Option<ParamSnapshot> {
     })
 }
 
-/// The control surface. Owns Arc handles into the shared state; every read is
-/// live, every write lands in the atomic map immediately.
+/// Short label for an exposed parameter.
+pub fn label(id: &str) -> String {
+    let name = match id {
+        "spawn_interval_ms" => "Interval",
+        "max_particles" => "Pool",
+        "reverse_chance" => "Reverse",
+        "lfo_rate_hz" => "LFO Rate",
+        "lfo_depth" => "LFO Depth",
+        "position_smooth_ms" => "Smooth",
+        "texture_blend" => "Texture",
+        "texture_stretch" => "Stretch",
+        "pitch_max" => "Pitch",
+        "feedback_gain" => "Feedback",
+        "feedback_delay_ms" => "FB Delay",
+        "base_position" => "Base Pos",
+        "wet" => "Wet",
+        "dry" => "Dry",
+        _ => id,
+    };
+    name.to_string()
+}
+
+/// Leaves, particles, panels: parameters shown in each side panel.
+const LEFT_PARAMS: &[&'static str] =
+    &["spawn_interval_ms", "max_particles", "reverse_chance", "base_position"];
+const RIGHT_PARAMS: &[&'static str] =
+    &["texture_blend", "feedback_gain", "lfo_depth", "position_smooth_ms"];
+
+// --------------------------------- dots -------------------------------------
+/// One lit dot on the sigil: a particle, fading over its lifetime.
+#[derive(Debug, Clone, Copy)]
+struct Dot {
+    /// Age in seconds since it lit up.
+    age: f32,
+    /// Lifetime in seconds (converted from the spawn event's samples).
+    lifetime: f32,
+}
+
+/// Fade factor (1 = just born, 0 = dead).
+fn dot_alpha(d: &Dot) -> f32 {
+    if d.lifetime <= 0.0 || d.age > d.lifetime {
+        0.0
+    } else {
+        1.0 - d.age / d.lifetime
+    }
+}
+
+/// Per-ring circular slot buffer.
+type RingSlots = [Dot; DOTS_PER_RING];
+
+// ------------------------------ panel anim ----------------------------------
+/// A tweened panel visibility.
+#[derive(Debug, Clone, Copy)]
+struct PanelAnim {
+    target: bool,
+    opacity: f32,
+}
+
+impl PanelAnim {
+    fn hidden() -> Self {
+        Self {
+            target: false,
+            opacity: 0.0,
+        }
+    }
+    fn update(&mut self, dt: f32) {
+        let goal = if self.target { 1.0 } else { 0.0 };
+        self.opacity += (goal - self.opacity) * (PANEL_TAU * dt).min(1.0);
+        if (goal - self.opacity).abs() < 0.002 {
+            self.opacity = goal;
+        }
+    }
+}
+
+// -------------------------------- the view ----------------------------------
+/// GUI state: the sigil animation + panels + shared atomic handles.
 pub struct ParticulaView {
     pub param_map: ParamMap,
     pub stats: Arc<[std::sync::atomic::AtomicUsize; 3]>,
+    /// Spawn events posted by the audio thread, drained on every tick.
+    spawn_rx: Arc<Mutex<Receiver<SpawnEvent>>>,
+
+    /// Lit dots per ring (circular slot buffers).
+    dots: [RingSlots; RINGS],
+    /// Global dot slot pointer (rotates across rings).
+    next_dot: usize,
+    /// Differential ring rotation angles (radians).
+    ring_phases: [f32; RINGS],
+
+    /// Panel fade animation.
+    panel_left: PanelAnim,
+    panel_right: PanelAnim,
+    /// Whether the About overlay is open.
+    about: bool,
+
+    last_frame: Option<Instant>,
 }
 
 impl i_am_dsp_iced::SyncedView for ParticulaView {
     type Message = ParticulaMessage;
 
-    fn update(&mut self, _: &Self::Message) {}
+    fn update(&mut self, message: &Self::Message) {
+        match message {
+            ParticulaMessage::Tick => {
+                let now = Instant::now();
+                let dt = self
+                    .last_frame
+                    .map(|t| now.duration_since(t).as_secs_f32())
+                    .unwrap_or(0.0);
+                self.last_frame = Some(now);
+                self.animate(dt);
+            }
+            ParticulaMessage::ToggleLeft => self.panel_left.target = !self.panel_left.target,
+            ParticulaMessage::ToggleRight => self.panel_right.target = !self.panel_right.target,
+            ParticulaMessage::ShowAbout(show) => self.about = *show,
+            ParticulaMessage::Randomize => randomize_all(&self.param_map),
+            ParticulaMessage::MasterEnabled(v) => {
+                self.param_map.set("enabled", *v, std::sync::atomic::Ordering::Relaxed);
+            }
+            ParticulaMessage::Param { .. } => {}
+        }
+    }
 
     fn view(&self) -> Element<'_, Self::Message> {
         Self::build(self)
@@ -184,232 +239,360 @@ impl i_am_dsp_iced::SyncedView for ParticulaView {
 }
 
 impl ParticulaView {
-    fn val(&self, id: &'static str) -> Option<ParamSnapshot> {
-        snapshot(id, &self.param_map)
+    /// Builds the view from the shared audio/GUI handles.
+    pub fn new(
+        param_map: ParamMap,
+        stats: Arc<[std::sync::atomic::AtomicUsize; 3]>,
+        spawn_rx: Arc<Mutex<Receiver<SpawnEvent>>>,
+    ) -> Self {
+        Self {
+            param_map,
+            stats,
+            spawn_rx,
+            dots: [[Dot {
+                age: 0.0,
+                lifetime: 0.0,
+            }; DOTS_PER_RING]; RINGS],
+            next_dot: 0,
+            ring_phases: [0.0; RINGS],
+            panel_left: PanelAnim::hidden(),
+            panel_right: PanelAnim::hidden(),
+            about: false,
+            last_frame: None,
+        }
+    }
+
+    /// Advance the animation by dt: ingest spawn events, fade dots, spin rings,
+    /// tween panels.
+    fn animate(&mut self, dt: f32) {
+        // 1. Ingest any spawn events posted by the audio thread.
+        {
+            let rx = self.spawn_rx.lock().expect("spawn receiver lock");
+            for ev in rx.try_iter() {
+                let ring = self.next_dot % RINGS;
+                let slot = (self.next_dot / RINGS) % DOTS_PER_RING;
+                let sr = if self.stats[2].load(std::sync::atomic::Ordering::Relaxed) == 0 {
+                    48_000.0
+                } else {
+                    self.stats[2].load(std::sync::atomic::Ordering::Relaxed) as f32
+                };
+                self.dots[ring][slot] = Dot {
+                    age: 0.0,
+                    lifetime: ev.lifetime_samples as f32 / sr,
+                };
+                self.next_dot += 1;
+            }
+        }
+
+        // 2. Age the dots (keep them until the slot is reused by a new spawn).
+        for ring in 0..RINGS {
+            for slot in 0..DOTS_PER_RING {
+                self.dots[ring][slot].age += dt;
+            }
+        }
+
+        // 3. Rotate the rings.
+        for (r, phase) in self.ring_phases.iter_mut().enumerate() {
+            *phase += RING_SPEED[r] * dt;
+        }
+
+        // 4. Tween the panels.
+        self.panel_left.update(dt);
+        self.panel_right.update(dt);
     }
 
     fn live(&self) -> usize {
-        self.stats[0].load(Ordering::Relaxed)
+        self.stats[0].load(std::sync::atomic::Ordering::Relaxed)
     }
     fn spawned(&self) -> usize {
-        self.stats[1].load(Ordering::Relaxed)
+        self.stats[1].load(std::sync::atomic::Ordering::Relaxed)
     }
     fn sample_rate(&self) -> usize {
-        self.stats[2].load(Ordering::Relaxed)
+        self.stats[2].load(std::sync::atomic::Ordering::Relaxed)
     }
 
     fn build(&self) -> Element<'static, ParticulaMessage> {
+        // ---- header ----
         let header = container(
             row![
-                sigil_mark(26.0),
+                button(sigil_mark(26.0))
+                    .on_press(ParticulaMessage::ShowAbout(true))
+                    .style(flat_button),
                 text("P A R T I C U L A").font(DISPLAY).size(15).color(TEXT),
                 iced::widget::space(),
-                text("●  S Y S T E M   L I V E")
-                    .font(MONO)
-                    .size(9)
-                    .color(TEXT),
+                text("WET").font(MONO).size(8).color(TEXT_FAINT),
+                self.mini_slider("wet"),
+                text("DRY").font(MONO).size(8).color(TEXT_FAINT),
+                self.mini_slider("dry"),
+                self.enabled_toggler(),
             ]
             .align_y(iced::Alignment::Center)
-            .padding([0, 4]),
+            .spacing(10),
         )
         .padding([12, 24])
         .style(panel_style(None, LINE, 0.0, 0.0));
 
-        let sigil_column = column![
-            text("THE SIGIL SYSTEM · GRAIN CLOUD")
-                .font(MONO)
-                .size(9)
-                .color(TEXT_FAINT),
-            text("Particula").font(DISPLAY).size(34).color(TEXT),
-            text("one shared history,
-read as a constellation of voices.")
-                .font(MONO)
-                .size(10)
-                .color(TEXT_DIM),
-            iced::widget::canvas(SigilMatrix {
-                lit: self.live().min(30),
-                cols: 6,
-                rows: 5,
+        // ---- centre sigil: canvas + left/right click zones (half layout) ----
+        let sigil = iced::widget::stack![
+            iced::widget::canvas(SigilCanvas {
+                dots: self.dots,
+                phases: self.ring_phases,
             })
-            .width(Length::Fixed(150.0))
-            .height(Length::Fixed(96.0)),
-            text(format!("LIVE  {}  /  POOL  256", self.live()))
-                .font(MONO)
-                .size(8)
-                .color(TEXT_FAINT),
-        ]
-        .spacing(10)
-        .padding([0, 4]);
-
-        let group_columns: Vec<Element<'static, ParticulaMessage>> = GROUPS
-            .chunks(2)
-            .map(|pair| {
-                let cols = pair
-                    .iter()
-                    .map(|(title, ids)| self.panel(title, ids))
-                    .collect::<Vec<_>>();
-                row(cols).spacing(18).into()
-            })
-            .collect();
-
-        let groups = column(group_columns).spacing(14).padding([0, 4]);
-
-        let middle = row![sigil_column, groups].spacing(32).padding([22, 24]);
-
-        // Preset constellation cards (homology .preset with a mini-matrix).
-        let preset_row = row(
-            PRESETS
-                .iter()
-                .map(|(name, params)| self.preset_card(name, params))
-                .collect::<Vec<_>>(),
-        )
-        .spacing(12)
-        .padding([0, 24]);
-
-        let stats = container(
+            .width(Length::Fill)
+            .height(Length::Fill),
             row![
-                stat_pill(self.live(), "LIVE"),
-                stat_pill(self.spawned(), "SPAWNED"),
-                stat_pill(self.sample_rate(), "SAMPLE RATE"),
-                stat_pill(3, "SIGIL"),
+                container(
+                    iced::widget::mouse_area(
+                        iced::widget::space().width(Length::Fill).height(Length::Fill)
+                    )
+                    .on_press(ParticulaMessage::ToggleLeft)
+                )
+                .width(Length::FillPortion(1))
+                .height(Length::Fill),
+                container(
+                    iced::widget::mouse_area(
+                        iced::widget::space().width(Length::Fill).height(Length::Fill)
+                    )
+                    .on_press(ParticulaMessage::ToggleRight)
+                )
+                .width(Length::FillPortion(1))
+                .height(Length::Fill),
             ]
-            .padding([14, 24]),
+            .width(Length::Fill)
+            .height(Length::Fill),
+        ]
+        .width(Length::Fill)
+        .height(Length::Fill);
+
+        let centre = container(sigil)
+            .width(Length::Fill)
+            .height(Length::Fill);
+
+        // ---- side panels (faded in/out) ----
+        let left = self.side_panel("01 · GENERATION", LEFT_PARAMS, self.panel_left);
+        let right = self.side_panel("02 · MATERIAL / MODULATION", RIGHT_PARAMS, self.panel_right);
+
+        let body = row![left, centre, right].spacing(0);
+
+        // ---- footer ----
+        let status_line = format!("{:<5} LIVE   {} SPAWNED   {} HZ", self.live(), self.spawned(), self.sample_rate());
+        let footer = container(
+            row![
+                text(status_line)
+                    .font(MONO)
+                    .size(9)
+                    .color(TEXT_FAINT),
+                iced::widget::space(),
+                button(text("RANDOMIZE").font(MONO).size(9).color(TEXT_DIM))
+                    .on_press(ParticulaMessage::Randomize)
+                    .style(flat_button),
+            ]
+            .align_y(iced::Alignment::Center)
+            .padding([0, 24]),
         )
         .style(panel_style(Some(BG_PANEL), LINE, 1.0, 0.0));
 
-        container(column![header, middle, preset_row, stats].spacing(0))
+        let base = container(column![header, body, footer].spacing(0))
             .width(Length::Fill)
             .height(Length::Fill)
-            .style(panel_style(Some(BG), Color::TRANSPARENT, 0.0, 0.0))
+            .style(panel_style(Some(BG), Color::TRANSPARENT, 0.0, 0.0));
+
+        // ---- optional About overlay ----
+        if self.about {
+            let overlay: Element<'static, ParticulaMessage> = container(
+                column![
+                    text("PARTICULA").font(DISPLAY).size(30).color(TEXT),
+                    text("a granular-cloud signal engine")
+                        .font(MONO)
+                        .size(10)
+                        .color(TEXT_DIM),
+                    text("one shared history · feedback · texture · bpm · reverse")
+                        .font(MONO)
+                        .size(9)
+                        .color(TEXT_FAINT),
+                    button(text("CLOSE").font(MONO).size(9).color(TEXT))
+                        .on_press(ParticulaMessage::ShowAbout(false))
+                        .style(flat_button)
+                        .padding([6, 18]),
+                ]
+                .spacing(12)
+                .align_x(iced::Alignment::Center),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(panel_style(Some(BG), LINE, 1.0, 0.0))
+            .into();
+            return iced::widget::stack![base, overlay].into();
+        }
+
+        base.into()
+    }
+
+    /// A compact slider (header dry/wet).
+    fn mini_slider(&self, id: &'static str) -> Element<'static, ParticulaMessage> {
+        let Some(s) = snapshot(id, &self.param_map) else {
+            return iced::widget::space().into();
+        };
+        let map = self.param_map.clone();
+        slider(s.min..=s.max, s.value, move |v| {
+            map.set(id, v, std::sync::atomic::Ordering::Relaxed);
+            ParticulaMessage::Tick
+        })
+        .step(nice_step(s.min, s.max))
+        .width(Length::Fixed(90.0))
+        .style(slider_style)
+        .into()
+    }
+
+    fn enabled_toggler(&self) -> Element<'static, ParticulaMessage> {
+        let on = snapshot("enabled", &self.param_map)
+            .map(|s| s.value > 0.5)
+            .unwrap_or(true);
+        iced::widget::toggler::Toggler::new(on)
+            .on_toggle(ParticulaMessage::MasterEnabled)
+            .label("ON")
             .into()
     }
 
-    /// One panel: kicker title + a vertical stack of live parameter rows.
-    fn panel(&self, title: &'static str, ids: &'static [&'static str]) -> Element<'static, ParticulaMessage> {
+    /// One fading side panel with a few parameter rows.
+    fn side_panel(
+        &self,
+        title: &'static str,
+        ids: &'static [&'static str],
+        anim: PanelAnim,
+    ) -> Element<'static, ParticulaMessage> {
         let rows = ids
             .iter()
             .map(|id| self.param_row(id))
             .collect::<Vec<_>>();
-
-        column![
-            row![
-                text(title).font(MONO).size(9).color(TEXT_DIM),
-                iced::widget::space(),
-                iced::widget::canvas(SigilPips {
-                    lit: self.group_lit(ids),
-                    cols: 4,
-                    rows: 2,
-                })
-                .width(Length::Fixed(48.0))
-                .height(Length::Fixed(20.0)),
+        container(
+            column![
+                text(title).font(MONO).size(10).color(TEXT_DIM),
+                iced::widget::space().height(4),
+                column(rows).spacing(2),
             ]
-            .align_y(iced::Alignment::Center),
-            column(rows).spacing(2),
-        ]
-        .spacing(10)
+            .padding(18),
+        )
+        .width(Length::Fixed((anim.opacity * 210.0 + 18.0).max(18.0)))
+        .style(panel_style(None, LINE, 1.0, 0.0))
         .into()
     }
 
-    /// Fractional lit count across a panel, scaled to 8 pip positions.
-    fn group_lit(&self, ids: &'static [&'static str]) -> usize {
-        let mut sum = 0.0_f32;
-        let mut n = 0usize;
-        for id in ids {
-            if let Some(s) = self.val(id) {
-                let norm = if s.max > s.min {
-                    ((s.value - s.min) / (s.max - s.min)).clamp(0.0, 1.0)
-                } else {
-                    0.0
-                };
-                sum += norm;
-                n += 1;
-            }
-        }
-        if n == 0 {
-            0
-        } else {
-            ((sum / n as f32) * 8.0).round() as usize
-        }
-    }
-
     fn param_row(&self, id: &'static str) -> Element<'static, ParticulaMessage> {
-        let Some(snap) = self.val(id) else {
+        let Some(snap) = snapshot(id, &self.param_map) else {
             return iced::widget::space().into();
         };
         let map = self.param_map.clone();
-        let id_for_event = id;
-
         container(
             row![
                 text(label(id))
                     .font(MONO)
                     .size(9)
                     .color(TEXT_DIM)
-                    .width(Length::Fixed(72.0)),
+                    .width(Length::Fixed(64.0)),
                 slider(snap.min..=snap.max, snap.value, move |v| {
-                    // Write the atomic map directly: the audio thread applies
-                    // it via Paramed::sync_params on the next sample.
-                    map.set(id_for_event, v, Ordering::Relaxed);
+                    map.set(id, v, std::sync::atomic::Ordering::Relaxed);
                     ParticulaMessage::Tick
                 })
                 .step(nice_step(snap.min, snap.max))
                 .style(slider_style),
-                text(format!("{:.2}", self.val(id).map(|s| s.value).unwrap_or(0.0)))
+                text(format!("{:.2}", snap.value))
                     .font(MONO)
                     .size(9)
                     .color(TEXT_FAINT)
-                    .width(Length::Fixed(52.0)),
+                    .width(Length::Fixed(48.0)),
             ]
             .align_y(iced::Alignment::Center)
             .spacing(8),
         )
-        .padding([7, 2])
+        .padding([8, 0])
         .style(panel_style(None, LINE, 1.0, 0.0))
-        .into()
-    }
-
-    /// A clickable preset card: applying the constellation to the map.
-    fn preset_card(
-        &self,
-        name: &'static str,
-        params: &'static [(&'static str, f32)],
-    ) -> Element<'static, ParticulaMessage> {
-        let map = self.param_map.clone();
-        button(
-            column![
-                iced::widget::canvas(SigilMatrix {
-                    lit: 7,
-                    cols: 4,
-                    rows: 4,
-                })
-                .width(Length::Fixed(72.0))
-                .height(Length::Fixed(60.0)),
-                text(name).font(MONO).size(9).color(TEXT),
-            ]
-            .spacing(6)
-            .align_x(iced::Alignment::Center),
-        )
-        .on_press_with(move || {
-            for (pid, pv) in params {
-                map.set(pid, *pv, Ordering::Relaxed);
-            }
-            ParticulaMessage::Tick
-        })
-        .style(preset_button_style)
         .into()
     }
 }
 
-// ------------------------------ viewers -------------------------------------
-fn stat_pill(n: usize, l: &'static str) -> Element<'static, ParticulaMessage> {
-    column![
-        text(n.to_string()).font(DISPLAY).size(19).color(TEXT),
-        text(l).font(MONO).size(8).color(TEXT_FAINT),
-    ]
-    .spacing(2)
-    .width(Length::Fill)
-    .align_x(iced::Alignment::Center)
-    .into()
+// -------------------------------- randomize ---------------------------------
+fn randomize_all(map: &ParamMap) {
+    use std::sync::atomic::Ordering;
+    enum Plan {
+        Float(f32),
+        Int(i32),
+        Bool(bool),
+    }
+    let mut rng = tiny_rng();
+    for i in 0..map.len() {
+        let Some(id) = map.query_param_id(i).map(|s| s.to_string()) else {
+            continue;
+        };
+        if id == "dry" || id == "wet" || id == "enabled" {
+            continue;
+        }
+        // Read an owned value plan, then set it (avoids holding a borrow of
+        // `map` while calling `map.set`).
+        let plan = match &*map.get_by_index(i).expect("param") {
+            AtomicValue::Float {
+                range,
+                logarithmic,
+                ..
+            } => {
+                let (lo, hi) = (*range.start(), *range.end());
+                let v = if *logarithmic && lo > 0.0 {
+                    lo * (hi / lo).powf(rng())
+                } else {
+                    lo + (hi - lo) * rng()
+                };
+                Plan::Float(v)
+            }
+            AtomicValue::Int { range, .. } => {
+                let (lo, hi) = (*range.start(), *range.end());
+                let span = (hi - lo) as u32 + 1;
+                Plan::Int(lo + (rng() * span as f32) as i32)
+            }
+            AtomicValue::Bool { .. } => Plan::Bool(rng() > 0.5),
+            _ => continue,
+        };
+        match plan {
+            Plan::Float(v) => {
+                map.set(&id, v, Ordering::Relaxed);
+            }
+            Plan::Int(v) => {
+                map.set(&id, v, Ordering::Relaxed);
+            }
+            Plan::Bool(v) => {
+                map.set(&id, v, Ordering::Relaxed);
+            }
+        }
+    }
+}
+
+fn tiny_rng() -> impl FnMut() -> f32 {
+    let mut x: u64 = 0x9E3779B97F4A7C15;
+    move || {
+        x ^= x << 7;
+        x ^= x >> 9;
+        (x as f32) * (1.0 / u32::MAX as f32).abs()
+    }
+}
+
+// -------------------------------- styling -----------------------------------
+fn nice_step(min: f32, max: f32) -> f32 {
+    let span = (max - min).abs();
+    if span <= 0.0 {
+        return 0.0;
+    }
+    let raw = span / 200.0;
+    let base = 10.0_f32.powf(raw.log10().floor());
+    let m = raw / base;
+    let nice = if m < 1.5 {
+        1.0
+    } else if m < 3.0 {
+        2.0
+    } else if m < 7.0 {
+        5.0
+    } else {
+        10.0
+    };
+    (nice * base).max(1e-4)
 }
 
 fn panel_style(
@@ -427,6 +610,24 @@ fn panel_style(
             ..Default::default()
         },
         ..container::Style::default()
+    }
+}
+
+fn flat_button(_: &iced::Theme, status: button::Status) -> button::Style {
+    let border = match status {
+        button::Status::Hovered => LINE,
+        _ => Color::TRANSPARENT,
+    };
+    button::Style {
+        background: None,
+        text_color: TEXT,
+        border: iced::Border {
+            color: border,
+            width: 1.0,
+            radius: 0.0.into(),
+            ..Default::default()
+        },
+        ..Default::default()
     }
 }
 
@@ -450,28 +651,107 @@ fn slider_style(_: &iced::Theme, _: slider::Status) -> slider::Style {
     }
 }
 
-fn preset_button_style(_: &iced::Theme, status: button::Status) -> button::Style {
-    let (border_color, text_color) = match status {
-        button::Status::Hovered | button::Status::Pressed => (LINE, TEXT),
-        _ => (Color::from_rgba(1.0, 1.0, 1.0, 0.10), TEXT_DIM),
-    };
-    button::Style {
-        background: Some(iced::Background::Color(BG_PANEL)),
-        text_color,
-        border: iced::Border {
-            color: border_color,
-            width: 1.0,
-            radius: 2.0.into(),
-            ..Default::default()
-        },
-        ..Default::default()
-    }
+// -------------------------------- the sigil ---------------------------------
+/// The living sigil: rings, lit dots and a radial glow, plus half-click zones.
+struct SigilCanvas {
+    dots: [RingSlots; RINGS],
+    phases: [f32; RINGS],
 }
 
-// ------------------------------- canvas bits --------------------------------
-/// Header sigil: ring + diagonals + apex dot (HOMOLOGY mark).
-struct SigilMark {
-    size: f32,
+impl<M> canvas::Program<M> for SigilCanvas {
+    type State = ();
+
+    fn draw(
+        &self,
+        _: &Self::State,
+        renderer: &iced::Renderer,
+        _: &iced::Theme,
+        bounds: iced::Rectangle,
+        _: iced::mouse::Cursor,
+    ) -> Vec<canvas::Geometry> {
+        let mut frame = canvas::Frame::new(renderer, bounds.size());
+        let w = bounds.width;
+        let h = bounds.height;
+        let c = frame.center();
+        let max_r = w.min(h) * 0.5;
+
+        // Radial glow: concentric filled circles with fading alpha.
+        for i in (1..=8).rev() {
+            let r = max_r * (i as f32 / 8.0);
+            let a = (0.02 * i as f32).clamp(0.0, 0.12);
+            frame.fill(
+                &canvas::Path::circle(c, r),
+                Color::from_rgba(1.0, 1.0, 1.0, a),
+            );
+        }
+
+        // Three rings, differential rotation.
+        for (ring, &phase) in self.phases.iter().enumerate() {
+            let r = max_r * (0.72 - ring as f32 * 0.18);
+            frame.stroke(
+                &canvas::Path::circle(c, r),
+                canvas::Stroke {
+                    width: 1.0,
+                    style: canvas::Style::Solid(Color::from_rgba(1.0, 1.0, 1.0, 0.14)),
+                    ..canvas::Stroke::default()
+                },
+            );
+
+            // Dots: faint skeleton + lit spawns.
+            for slot in 0..DOTS_PER_RING {
+                let base_angle = slot as f32 / DOTS_PER_RING as f32 * std::f32::consts::TAU;
+                let angle = base_angle + phase;
+                let dot_pos = iced::Point::new(
+                    c.x + angle.cos() * r,
+                    c.y + angle.sin() * r,
+                );
+                let d = &self.dots[ring][slot];
+                // Only draw faint skeleton dots where no particle is lit.
+                let alpha = dot_alpha(d);
+                if alpha > 0.02 {
+                    frame.fill(
+                        &canvas::Path::circle(dot_pos, 2.6),
+                        Color::from_rgba(1.0, 1.0, 1.0, alpha),
+                    );
+                } else {
+                    frame.fill(
+                        &canvas::Path::circle(dot_pos, 1.2),
+                        Color::from_rgba(1.0, 1.0, 1.0, 0.06),
+                    );
+                }
+            }
+        }
+
+        // Center mark.
+        frame.stroke(
+            &canvas::Path::circle(c, max_r * 0.12),
+            canvas::Stroke {
+                width: 1.0,
+                style: canvas::Style::Solid(Color::from_rgba(1.0, 1.0, 1.0, 0.4)),
+                ..canvas::Stroke::default()
+            },
+        );
+        frame.fill(
+            &canvas::Path::circle(c, 2.0),
+            Color::from_rgba(1.0, 1.0, 1.0, 0.9),
+        );
+
+        // Split indicator (faint vertical divider, left/right zones).
+        frame.stroke(
+            &canvas::Path::line(
+                iced::Point::new(c.x, c.y - max_r * 0.4),
+                iced::Point::new(c.x, c.y + max_r * 0.4),
+            ),
+            canvas::Stroke {
+                width: 1.0,
+                style: canvas::Style::Solid(Color::from_rgba(1.0, 1.0, 1.0, 0.08)),
+                ..canvas::Stroke::default()
+            },
+        );
+
+        vec![frame.into_geometry()]
+    }
+
 }
 
 fn sigil_mark(size: f32) -> Element<'static, ParticulaMessage> {
@@ -479,6 +759,11 @@ fn sigil_mark(size: f32) -> Element<'static, ParticulaMessage> {
         .width(Length::Fixed(size))
         .height(Length::Fixed(size))
         .into()
+}
+
+/// Small header mark (kept as a simple ring + apex).
+struct SigilMark {
+    size: f32,
 }
 
 impl<M> canvas::Program<M> for SigilMark {
@@ -491,135 +776,18 @@ impl<M> canvas::Program<M> for SigilMark {
         bounds: iced::Rectangle,
         _: iced::mouse::Cursor,
     ) -> Vec<canvas::Geometry> {
-        use iced::widget::canvas::Stroke;
         let mut frame = canvas::Frame::new(renderer, bounds.size());
         let c = frame.center();
-        let r = self.size * 0.42;
+        let r = self.size * 0.4;
         frame.stroke(
-            &Path::circle(c, r),
-            Stroke {
+            &canvas::Path::circle(c, r),
+            canvas::Stroke {
                 width: 1.0,
                 style: canvas::Style::Solid(Color::from_rgba(1.0, 1.0, 1.0, 0.5)),
-                ..Stroke::default()
+                ..canvas::Stroke::default()
             },
         );
-        let top = iced::Point::new(c.x, c.y - r);
-        frame.stroke(
-            &Path::line(top, iced::Point::new(c.x - r * 0.72, c.y + r * 0.68)),
-            Stroke {
-                width: 1.0,
-                style: canvas::Style::Solid(Color::from_rgba(1.0, 1.0, 1.0, 0.9)),
-                ..Stroke::default()
-            },
-        );
-        frame.stroke(
-            &Path::line(top, iced::Point::new(c.x + r * 0.72, c.y + r * 0.68)),
-            Stroke {
-                width: 1.0,
-                style: canvas::Style::Solid(Color::from_rgba(1.0, 1.0, 1.0, 0.9)),
-                ..Stroke::default()
-            },
-        );
-        frame.fill(&Path::circle(top, 1.6), GLOW);
-        vec![frame.into_geometry()]
-    }
-}
-
-/// Dot matrix.
-struct SigilMatrix {
-    lit: usize,
-    cols: usize,
-    rows: usize,
-}
-
-impl<M> canvas::Program<M> for SigilMatrix {
-    type State = ();
-    fn draw(
-        &self,
-        _: &Self::State,
-        renderer: &iced::Renderer,
-        _: &iced::Theme,
-        bounds: iced::Rectangle,
-        _: iced::mouse::Cursor,
-    ) -> Vec<canvas::Geometry> {
-        let mut frame = canvas::Frame::new(renderer, bounds.size());
-        let step_x = bounds.width / self.cols as f32;
-        let step_y = bounds.height / self.rows as f32;
-        let dot = (step_x.min(step_y) * 0.12).max(1.2);
-        let mut i = 0usize;
-        for r in 0..self.rows {
-            for c in 0..self.cols {
-                let center = iced::Point::new((c as f32 + 0.5) * step_x, (r as f32 + 0.5) * step_y);
-                let color = if i < self.lit {
-                    GLOW
-                } else {
-                    Color::from_rgba(1.0, 1.0, 1.0, 0.08)
-                };
-                frame.fill(&Path::circle(center, dot), color);
-                i += 1;
-            }
-        }
-        vec![frame.into_geometry()]
-    }
-}
-
-/// A tidy, range-adaptive slider step: target ~200 notches across the
-/// parameter span (iced defaults to step = 1, which quantizes e.g. a 0..1
-/// blend slider to two positions).
-fn nice_step(min: f32, max: f32) -> f32 {
-    let span = (max - min).abs();
-    if span <= 0.0 {
-        return 0.0;
-    }
-    let raw = span / 200.0;
-    let base = 10.0_f32.powf(raw.log10().floor());
-    let m = raw / base;
-    let nice = if m < 1.5 {
-        1.0
-    } else if m < 3.0 {
-        2.0
-    } else if m < 7.0 {
-        5.0
-    } else {
-        10.0
-    };
-    (nice * base).max(1e-4)
-}
-
-/// Tiny 4x2 pip row for a panel header (value-scaled).
-struct SigilPips {
-    lit: usize,
-    cols: usize,
-    rows: usize,
-}
-
-impl<M> canvas::Program<M> for SigilPips {
-    type State = ();
-    fn draw(
-        &self,
-        _: &Self::State,
-        renderer: &iced::Renderer,
-        _: &iced::Theme,
-        bounds: iced::Rectangle,
-        _: iced::mouse::Cursor,
-    ) -> Vec<canvas::Geometry> {
-        let mut frame = canvas::Frame::new(renderer, bounds.size());
-        let step_x = bounds.width / self.cols as f32;
-        let step_y = bounds.height / self.rows as f32;
-        let dot = (step_x.min(step_y) * 0.14).max(1.0);
-        let mut i = 0usize;
-        for r in 0..self.rows {
-            for c in 0..self.cols {
-                let center = iced::Point::new((c as f32 + 0.5) * step_x, (r as f32 + 0.5) * step_y);
-                let color = if i < self.lit {
-                    GLOW
-                } else {
-                    Color::from_rgba(1.0, 1.0, 1.0, 0.07)
-                };
-                frame.fill(&Path::circle(center, dot), color);
-                i += 1;
-            }
-        }
+        frame.fill(&canvas::Path::circle(c, 1.8), GLOW);
         vec![frame.into_geometry()]
     }
 }

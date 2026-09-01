@@ -13,9 +13,10 @@
 mod ui;
 
 use std::sync::{
-    Arc,
+    Arc, Mutex,
     atomic::{AtomicUsize, Ordering},
 };
+use crossbeam_channel::{Receiver, unbounded};
 
 use i_am_dsp::{
     Effect, ProcessContext,
@@ -23,7 +24,7 @@ use i_am_dsp::{
 };
 use i_am_dsp_iced::Processor;
 use i_am_plugin::{Descriptor, Plugin, Tag, WindowOptions, export_clap};
-use particula::ParticulaEngine;
+use particula::{ParticulaEngine, SpawnEvent};
 
 use ui::{ParticulaMessage, ParticulaView};
 
@@ -36,19 +37,26 @@ pub struct ParticulaProcessor {
     /// GUI-visible counters, updated on the audio thread and read on the GUI
     /// thread. Order: [live, spawned, sample_rate].
     stats: Arc<[AtomicUsize; 3]>,
+    /// Receiving end of the spawn-event channel, handed to the GUI so it can
+    /// light up sigil dots as particles are born.
+    spawn_rx: Arc<Mutex<Receiver<SpawnEvent>>>,
 }
 
 impl ParticulaProcessor {
     /// Creates a new processor. The engine adapts to the sample rate the
     /// host reports at runtime, so the initial value is just a starting point.
     pub fn new(sample_rate: usize) -> Self {
+        let (tx, rx) = unbounded();
+        let mut engine = ParticulaEngine::<2>::new(
+            1 << 16, // 1.36 s of history at 48 kHz
+            sample_rate.max(1),
+            0x5EED_FA11,
+        );
+        engine.set_spawn_notifier(tx);
         Self {
-            engine: Paramed::new(ParticulaEngine::<2>::new(
-                1 << 16, // 1.36 s of history at 48 kHz
-                sample_rate.max(1),
-                0x5EED_FA11,
-            )),
+            engine: Paramed::new(engine),
             stats: Arc::new([AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0)]),
+            spawn_rx: Arc::new(Mutex::new(rx)),
         }
     }
 
@@ -89,6 +97,8 @@ impl Processor for ParticulaProcessor {
                 self.engine.param_map().set(id, value, Ordering::Relaxed);
             }
             ParticulaMessage::Tick => {}
+            // These are GUI-local (panel/about/randomize); the view handles them.
+            _ => {}
         }
     }
 
@@ -112,10 +122,7 @@ impl Processor for ParticulaProcessor {
     fn synced_view(&self) -> Self::SyncedView {
         // The view owns Arc handles into the shared state and reads/writes
         // them live on every frame; nothing here needs a snapshot.
-        ParticulaView {
-            param_map: self.engine.param_map(),
-            stats: self.stats.clone(),
-        }
+        ParticulaView::new(self.engine.param_map(), self.stats.clone(), self.spawn_rx.clone())
     }
 }
 

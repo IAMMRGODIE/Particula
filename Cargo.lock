@@ -3592,6 +3592,7 @@ name = "particula_plugin"
 version = "0.1.0"
 dependencies = [
  "clack-host",
+ "crossbeam-channel",
  "i_am_dsp",
  "i_am_dsp_iced",
  "i_am_plugin",
