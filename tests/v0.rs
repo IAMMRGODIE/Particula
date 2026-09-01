@@ -40,7 +40,7 @@ fn rng_is_deterministic_and_in_range() {
 
 #[test]
 fn spawn_rule_is_arithmetic_with_exponential_strength_decay() {
-    let mut e = ParticulaEngine::new(4096, SR, 1);
+    let mut e = ParticulaEngine::<1>::new(4096, SR, 1);
     e.base_position = 0.2;
     e.position_step = 0.1;
     e.initial_gain = 1.0;
@@ -68,7 +68,7 @@ fn spawn_rule_is_arithmetic_with_exponential_strength_decay() {
 /// 1024-sample history the fill time is ~1024 samples; we check after that.
 #[test]
 fn dc_input_reads_position_and_envelope() {
-    let mut e = ParticulaEngine::new(1024, SR, 99);
+    let mut e = ParticulaEngine::<1>::new(1024, SR, 99);
     e.dry = 0.0;
     e.wet = 1.0;
     e.texture_blend = 0.0; // pure history read test
@@ -110,7 +110,7 @@ fn dc_input_reads_position_and_envelope() {
 /// silence afterwards (where "silence" includes dry, so dry=0 here).
 #[test]
 fn single_particle_dies_and_output_goes_silent() {
-    let mut e = ParticulaEngine::new(512, SR, 3);
+    let mut e = ParticulaEngine::<1>::new(512, SR, 3);
     e.dry = 0.0;
     e.wet = 1.0;
     e.texture_blend = 0.0; // pure history read test
@@ -147,7 +147,7 @@ fn single_particle_dies_and_output_goes_silent() {
 /// live count.
 #[test]
 fn default_cloud_stays_bounded_and_finite() {
-    let mut e = ParticulaEngine::new(4096, SR, 1234);
+    let mut e = ParticulaEngine::<1>::new(4096, SR, 1234);
     let mut rng = SplitMix64::new(5);
     let n = SR; // 1 s
     let input: Vec<f32> = (0..n)

@@ -1,6 +1,6 @@
 # Particula — 实验性声音设计粒子效果器 · 架构文档
 
-> 状态：v0 / v1 / v2·WSOLA 纹理层 / v2·BPM sync 已实现并通过 19 个测试；剩余：stereo、UI/CLAP 导出。
+> 状态：v0 / v1 / v2·WSOLA 纹理层 / v2·BPM sync / v2·stereo 已实现并通过 24 个测试；剩余：UI/CLAP 导出。
 > 关联代码库：`i_am_dsp`（workspace 根：`i_am_dsp/Cargo.toml`）。particula 计划成为该 workspace 的第 6 个成员。
 
 ## 1. 定位与目标
@@ -11,6 +11,8 @@
 - WSOLA 作为**全局纹理层**（不是每粒子方案），负责整段 history 的时间拉伸质感（v2 加入）。
 
 ## 2. 引擎总览（数据流）
+
+- **声道模型（v2 stereo）**：`ParticulaEngine<CHANNELS>` 泛型；干声输入各声道直通，history/反馈/纹理共享一条 **mono mix**（各声道均值）；每个粒子带 spawn 时采样的 `pan ∈ [pan_min, pan_max]`，按等功率增益分布到两声道（CHANNELS=2），>2 声道等分、pan 忽略。反相输入（L=-R）会抵消成静音 —— 文档化行为。
 
 ```
                   ┌──────────────────────────────────────────────┐
@@ -149,7 +151,7 @@
 
 - **v0 ✅**：mono 粒子云 —— 读点(三次插值) + 位置平滑 + envelope(-60dB) + 出生规则(等差+抖动+指数衰减) + 成本验证。
 - **v1 ✅**：串行反馈（`feedback_delay` 注入点 + 阻尼 + soft-clip）+ 峰值跟随 position（`position_mode=3`，周期更新近窗峰值）。
-- **v2**：WSOLA 纹理层 ✅ + BPM sync ✅ + stereo ⏳ + UI/CLAP ⏳。
+- **v2**：WSOLA 纹理层 ✅ + BPM sync ✅ + stereo ✅ + UI/CLAP ⏳。
 
 ## 13. 待定项 / TODO
 

@@ -63,6 +63,9 @@ pub struct Particle {
     feedback_gain: f32,
     /// One-pole state used by the feedback damping lowpass.
     feedback_lp_state: f32,
+    /// Spawn-time pan in [-1, 1]; the engine distributes the voice with
+    /// equal-power gains (stereo).
+    pub pan: f32,
     attack_samples: usize,
     attack_elapsed: usize,
     decay_per_sample: f32,
@@ -83,6 +86,7 @@ impl Particle {
         freq_shift: f32,
         initial_gain: f32,
         feedback_gain: f32,
+        pan: f32,
         attack_samples: usize,
         lifetime_samples: usize,
         smooth_ms: f32,
@@ -103,6 +107,7 @@ impl Particle {
             initial_gain: initial_gain.max(0.0),
             feedback_gain: feedback_gain.max(0.0),
             feedback_lp_state: 0.0,
+            pan: pan.clamp(-1.0, 1.0),
             attack_samples,
             attack_elapsed: 0,
             decay_per_sample,

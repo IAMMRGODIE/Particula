@@ -79,7 +79,7 @@ fn feedback_changes_output_and_stays_bounded() {
         .collect();
 
     // Off version.
-    let mut off = ParticulaEngine::new(4096, SR, 11);
+    let mut off = ParticulaEngine::<1>::new(4096, SR, 11);
     off.dry = 0.4;
     off.wet = 1.0;
     off.texture_blend = 0.0; // isolate the feedback path
@@ -91,7 +91,7 @@ fn feedback_changes_output_and_stays_bounded() {
     let out_off = run(&mut off, &input);
 
     // On version (feedback loop at 60 ms, damped at 4 kHz).
-    let mut on = ParticulaEngine::new(4096, SR, 11);
+    let mut on = ParticulaEngine::<1>::new(4096, SR, 11);
     on.dry = 0.4;
     on.wet = 1.0;
     on.texture_blend = 0.0; // isolate the feedback path
@@ -122,7 +122,7 @@ fn feedback_changes_output_and_stays_bounded() {
 
 #[test]
 fn no_self_oscillation_on_silence() {
-    let mut e = ParticulaEngine::new(1024, SR, 42);
+    let mut e = ParticulaEngine::<1>::new(1024, SR, 42);
     e.dry = 0.0;
     e.wet = 1.0;
     e.texture_blend = 0.0; // isolate the feedback path
@@ -144,7 +144,7 @@ fn no_self_oscillation_on_silence() {
 
 #[test]
 fn peak_follow_mode_runs_and_reads() {
-    let mut e = ParticulaEngine::new(2048, SR, 7);
+    let mut e = ParticulaEngine::<1>::new(2048, SR, 7);
     e.dry = 0.0;
     e.wet = 1.0;
     e.texture_blend = 0.0; // isolate the peak-follow path

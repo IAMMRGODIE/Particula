@@ -95,7 +95,7 @@ fn texture_blend_changes_output() {
         })
         .collect();
 
-    let mut plain = ParticulaEngine::new(4096, SR, 21);
+    let mut plain = ParticulaEngine::<1>::new(4096, SR, 21);
     plain.dry = 0.4;
     plain.wet = 1.0;
     plain.texture_blend = 0.0;
@@ -103,7 +103,7 @@ fn texture_blend_changes_output() {
     plain.position_jitter = 0.1;
     let out_plain = run(&mut plain, &input);
 
-    let mut textured = ParticulaEngine::new(4096, SR, 21);
+    let mut textured = ParticulaEngine::<1>::new(4096, SR, 21);
     textured.dry = 0.4;
     textured.wet = 1.0;
     textured.texture_blend = 0.8;
@@ -128,7 +128,7 @@ fn texture_blend_changes_output() {
 
 #[test]
 fn texture_with_feedback_stays_bounded() {
-    let mut e = ParticulaEngine::new(8192, SR, 33);
+    let mut e = ParticulaEngine::<1>::new(8192, SR, 33);
     e.dry = 0.3;
     e.wet = 1.0;
     e.texture_blend = 0.6;

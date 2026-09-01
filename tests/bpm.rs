@@ -47,7 +47,7 @@ fn run_ctx(engine: &mut ParticulaEngine, ctx: &mut Box<dyn ProcessContext>, n: u
 
 /// A beat-synced engine at 120 BPM; interval 0.25 beats (= 16th notes).
 fn beat_engine(seed: u64) -> ParticulaEngine {
-    let mut e = ParticulaEngine::new(2048, SR, seed);
+    let mut e = ParticulaEngine::<1>::new(2048, SR, seed);
     e.dry = 0.0;
     e.wet = 1.0;
     e.texture_blend = 0.0;
@@ -91,7 +91,7 @@ fn beat_sync_falls_back_to_fallback_bpm_without_trusted_tempo() {
 
 #[test]
 fn free_run_mode_unchanged_when_sync_off() {
-    let mut e = ParticulaEngine::new(2048, SR, 3);
+    let mut e = ParticulaEngine::<1>::new(2048, SR, 3);
     e.dry = 0.0;
     e.wet = 1.0;
     e.texture_blend = 0.0;

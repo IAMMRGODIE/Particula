@@ -17,8 +17,35 @@ use crate::{
 /// Fixed pool capacity of the slot map (Architecture.md sec.10: 64~256).
 pub const DEFAULT_POOL_CAPACITY: usize = 256;
 
-/// The core engine. Mono for now (one shared history, particles sum into the
-/// single output channel).
+/// Equal-power pan gains across the channel count.
+///
+/// CHANNELS = 1: mono. CHANNELS = 2: constant-power L/R from pan in [-1, 1]
+/// (pan -1 = hard left). Larger counts: equal distribution (pan ignored).
+fn pan_gains<const CHANNELS: usize>(pan: f32) -> [f32; CHANNELS] {
+    let mut g = [0.0_f32; CHANNELS];
+    match CHANNELS {
+        0 => {}
+        1 => g[0] = 1.0,
+        2 => {
+            let t = (pan.clamp(-1.0, 1.0) + 1.0) * 0.5;
+            g[0] = (t * PI * 0.5).cos();
+            g[1] = (t * PI * 0.5).sin();
+        }
+        n => {
+            let inv = 1.0 / n as f32;
+            for x in &mut g {
+                *x = inv;
+            }
+        }
+    }
+    g
+}
+
+/// The core engine: shared mono history + particle pool + spawn rule.
+///
+/// Generic over CHANNELS: dry input is mixed to mono and pushed into the
+/// shared history; every particle voice is pan-distributed across channels
+/// with equal-power gains (stereo) or equal gains (mono / >2 channels).
 ///
 /// Data flow per sample (see Architecture.md sec.2):
 /// 1. dry input pushed at the write head;
@@ -33,7 +60,7 @@ pub const DEFAULT_POOL_CAPACITY: usize = 256;
 ///
 /// No BPM sync yet.
 #[derive(Parameters)]
-pub struct ParticulaEngine {
+pub struct ParticulaEngine<const CHANNELS: usize = 1> {
     // --- live-tweakable parameters (host-visible) ---
     #[range(min = 0.0, max = 1.0)]
     pub dry: f32,
@@ -127,6 +154,12 @@ pub struct ParticulaEngine {
     #[range(min = 1.0, max = 200.0)]
     pub texture_crossfade_ms: f32,
 
+    // Particle pan distribution (v2 stereo, per spawn).
+    #[range(min = -1.0, max = 1.0)]
+    pub pan_min: f32,
+    #[range(min = -1.0, max = 1.0)]
+    pub pan_max: f32,
+
     // --- internal state (never host parameters) ---
     #[skip]
     history: RingBuffer<f32>,
@@ -158,13 +191,13 @@ pub struct ParticulaEngine {
     next_peak_update: usize,
 }
 
-impl Default for ParticulaEngine {
+impl<const CHANNELS: usize> Default for ParticulaEngine<CHANNELS> {
     fn default() -> Self {
         Self::new(1 << 15, 48_000, 0x5EED_FA11)
     }
 }
 
-impl ParticulaEngine {
+impl<const CHANNELS: usize> ParticulaEngine<CHANNELS> {
     /// Creates a new engine.
     ///
     /// history_capacity bounds the maximum readable delay in samples;
@@ -208,6 +241,8 @@ impl ParticulaEngine {
             texture_refresh_ms: 43.0,
             texture_stretch: 1.0,
             texture_crossfade_ms: 12.0,
+            pan_min: -0.8,
+            pan_max: 0.8,
             history: RingBuffer::new(history_capacity.max(1)),
             bpm: BpmSyncer::new(sample_rate.max(1)),
             next_spawn_beat: 0.25,
@@ -276,6 +311,7 @@ impl ParticulaEngine {
         let gain = self.spawn_rule_gain(n);
         let rate = self.rng.range(self.pitch_min, self.pitch_max);
         let shift = self.rng.range(self.freq_shift_min, self.freq_shift_max);
+        let pan = self.rng.range(self.pan_min, self.pan_max);
         let lmin = (self.lifetime_ms_min * sample_rate as f32 / 1000.0) as usize;
         let lmax = (self.lifetime_ms_max * sample_rate as f32 / 1000.0) as usize;
         let lifetime = self.rng.range_usize(lmin, lmax);
@@ -299,6 +335,7 @@ impl ParticulaEngine {
             shift,
             gain,
             self.feedback_gain,
+            pan,
             attack,
             lifetime,
             self.position_smooth_ms,
@@ -315,7 +352,7 @@ impl ParticulaEngine {
     }
 }
 
-impl Effect<1> for ParticulaEngine {
+impl<const CHANNELS: usize> Effect<CHANNELS> for ParticulaEngine<CHANNELS> {
     fn delay(&self) -> usize {
         // No FIR / WSOLA yet: zero latency.
         0
@@ -323,8 +360,8 @@ impl Effect<1> for ParticulaEngine {
 
     fn process(
         &mut self,
-        samples: &mut [f32; 1],
-        _other: &[&[f32; 1]],
+        samples: &mut [f32; CHANNELS],
+        _other: &[&[f32; CHANNELS]],
         ctx: &mut Box<dyn ProcessContext>,
     ) {
         let infos = ctx.infos();
@@ -338,8 +375,10 @@ impl Effect<1> for ParticulaEngine {
         }
         let sample_rate = self.sample_rate;
 
-        // 1. dry input at the write head.
-        let input = samples[0];
+        // 1. dry input: mono mix into the shared history (dry path keeps
+        //    each input channel untouched).
+        let dry_in = *samples;
+        let input = dry_in.iter().sum::<f32>() / CHANNELS as f32;
         self.history.push(input);
         self.sample_count += 1;
 
@@ -414,7 +453,7 @@ impl Effect<1> for ParticulaEngine {
         // 4. particles: read, pitch, shift, envelope, sum; serial feedback
         //    writes into the history (Architecture.md sec.3.1: later
         //    particles see earlier ones' feedback this frame).
-        let mut wet = 0.0_f32;
+        let mut wet = [0.0_f32; CHANNELS];
         let dt = 1.0 / sample_rate as f32;
         let feedback_delay = ((self.feedback_delay_ms * sample_rate as f32 / 1000.0) as usize)
             .min(self.history.capacity());
@@ -444,7 +483,12 @@ impl Effect<1> for ParticulaEngine {
                 rng,
                 ctx,
             ) {
-                Some(s) => wet += s,
+                Some(s) => {
+                    let gains = pan_gains::<CHANNELS>(p.pan);
+                    for (w, g) in wet.iter_mut().zip(gains.iter()) {
+                        *w += s * g;
+                    }
+                },
                 None => {
                     self.slots[i] = None;
                     self.free.push(i);
@@ -453,7 +497,9 @@ impl Effect<1> for ParticulaEngine {
             i += 1;
         }
 
-        // 5. dry + wet.
-        samples[0] = input * self.dry + wet;
+        // 5. dry (per channel) + wet (pan-distributed particle voices).
+        for c in 0..CHANNELS {
+            samples[c] = dry_in[c] * self.dry + wet[c];
+        }
     }
 }

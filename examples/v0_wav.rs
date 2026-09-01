@@ -57,7 +57,7 @@ fn write_wav_f32(path: &str, sample_rate: u32, samples: &[f32]) -> std::io::Resu
 fn main() -> std::io::Result<()> {
     let input = generate_input(SECONDS);
 
-    let mut engine = ParticulaEngine::new(1 << 15, SR, 0xC0FFEE);
+    let mut engine = ParticulaEngine::<1>::new(1 << 15, SR, 0xC0FFEE);
     engine.dry = 0.35;
     engine.wet = 0.9;
     engine.texture_blend = 0.0; // v0 demo stays a pure particle cloud

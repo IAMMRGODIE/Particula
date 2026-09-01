@@ -57,7 +57,7 @@ fn write_wav_f32(path: &str, sample_rate: u32, samples: &[f32]) -> std::io::Resu
 fn main() -> std::io::Result<()> {
     let input = generate_input(SECONDS);
 
-    let mut engine = ParticulaEngine::new(1 << 16, SR, 0xBEEF);
+    let mut engine = ParticulaEngine::<1>::new(1 << 16, SR, 0xBEEF);
     engine.dry = 0.35;
     engine.wet = 0.9;
     engine.texture_blend = 0.0; // v1 demo stays feedback/peak only
