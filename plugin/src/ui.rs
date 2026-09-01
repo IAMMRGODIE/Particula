@@ -58,6 +58,7 @@ pub enum ParticulaMessage {
     Param { id: &'static str, value: f32 },
     ToggleLeft,
     ToggleRight,
+    PanelPage { side: usize, page: usize },
     ShowAbout(bool),
     Randomize,
     MasterEnabled(bool),
@@ -138,28 +139,83 @@ pub fn label(id: &str) -> String {
     name.to_string()
 }
 
-/// Leaves, particles, panels: parameters shown in each side panel.
-const LEFT_PARAMS: &[&'static str] = &[
-    "spawn_interval_ms",
-    "max_particles",
-    "reverse_chance",
-    "base_position",
-    "position_step",
-    "position_jitter",
-    "gain_decay_ratio",
-    "min_gain_ratio",
-    "initial_gain",
+/// Page tables for the side panels.
+/// condition codes: 0 = always, 1 = Fixed mode, 2 = LFO mode,
+/// 3 = RandomWalk mode, 4 = PeakFollow mode.
+type Pg = (&'static str, &'static [(&'static str, u8)]);
+
+const LEFT_PAGES: &[Pg] = &[
+    (
+        "I · SPAWN",
+        &[
+            ("spawn_interval_ms", 0),
+            ("spawn_sync", 0),
+            ("spawn_interval_beats", 0),
+            ("fallback_bpm", 0),
+            ("max_particles", 0),
+            ("reverse_chance", 0),
+        ],
+    ),
+    (
+        "II · LAW",
+        &[
+            ("base_position", 0),
+            ("position_step", 0),
+            ("position_jitter", 0),
+            ("gain_decay_ratio", 0),
+            ("min_gain_ratio", 0),
+            ("initial_gain", 0),
+        ],
+    ),
+    (
+        "III · SHAPE",
+        &[
+            ("attack_ms", 0),
+            ("lifetime_ms_min", 0),
+            ("lifetime_ms_max", 0),
+            ("freq_shift_min", 0),
+            ("freq_shift_max", 0),
+        ],
+    ),
 ];
-const RIGHT_PARAMS: &[&'static str] = &[
-    "texture_blend",
-    "texture_stretch",
-    "feedback_gain",
-    "feedback_delay_ms",
-    "lfo_rate_hz",
-    "lfo_depth",
-    "position_smooth_ms",
-    "pitch_max",
-    "wet",
+
+const RIGHT_PAGES: &[Pg] = &[
+    (
+        "I · MOVEMENT",
+        &[
+            ("position_mode", 0),
+            ("position_smooth_ms", 0),
+            ("lfo_rate_hz", 2),
+            ("lfo_depth", 2),
+            ("random_walk_step", 3),
+            ("random_walk_interval_ms", 3),
+            ("peak_window_ms", 4),
+            ("peak_update_ms", 4),
+            ("peak_threshold", 4),
+        ],
+    ),
+    (
+        "II · MATERIAL",
+        &[
+            ("texture_blend", 0),
+            ("texture_window_ms", 0),
+            ("texture_refresh_ms", 0),
+            ("texture_stretch", 0),
+            ("texture_crossfade_ms", 0),
+            ("pitch_min", 0),
+            ("pitch_max", 0),
+        ],
+    ),
+    (
+        "III · OUTPUT",
+        &[
+            ("feedback_gain", 0),
+            ("feedback_delay_ms", 0),
+            ("feedback_damping_hz", 0),
+            ("pan_min", 0),
+            ("pan_max", 0),
+        ],
+    ),
 ];
 
 // --------------------------------- dots -------------------------------------
@@ -190,6 +246,8 @@ type RingSlots = [Dot; DOTS_PER_RING];
 struct PanelAnim {
     target: bool,
     opacity: f32,
+    /// Current page index within the panel.
+    page: usize,
 }
 
 impl PanelAnim {
@@ -197,6 +255,7 @@ impl PanelAnim {
         Self {
             target: false,
             opacity: 0.0,
+            page: 0,
         }
     }
     fn update(&mut self, dt: f32) {
@@ -257,6 +316,14 @@ impl i_am_dsp_iced::SyncedView for ParticulaView {
                 self.panel_left.target = false;
             }
             ParticulaMessage::ShowAbout(show) => self.about = *show,
+            ParticulaMessage::PanelPage { side, page } => {
+                let anim = if *side == 0 {
+                    &mut self.panel_left
+                } else {
+                    &mut self.panel_right
+                };
+                anim.page = *page;
+            }
             ParticulaMessage::Randomize => randomize_all(&self.param_map),
             ParticulaMessage::MasterEnabled(v) => {
                 self.param_map.set("enabled", *v, std::sync::atomic::Ordering::Relaxed);
@@ -410,9 +477,9 @@ impl ParticulaView {
         let hidden: Element<'static, ParticulaMessage> =
             iced::widget::space().width(Length::Fixed(0.0)).into();
         let (left, right) = if self.panel_left.opacity >= self.panel_right.opacity {
-            (self.side_panel("01 · GENERATION", LEFT_PARAMS, self.panel_left), hidden)
+            (self.side_panel(0, LEFT_PAGES, self.panel_left), hidden)
         } else {
-            (hidden, self.side_panel("02 · MATERIAL / MODULATION", RIGHT_PARAMS, self.panel_right))
+            (hidden, self.side_panel(1, RIGHT_PAGES, self.panel_right))
         };
 
         let body = row![left, centre, right]
@@ -522,25 +589,63 @@ impl ParticulaView {
         .into()
     }
 
-    /// One fading side panel with a few parameter rows.
+    /// One fading side panel with a page picker on top and mode-filtered
+    /// parameter rows (condition code matches the position_mode set).
     fn side_panel(
         &self,
-        title: &'static str,
-        ids: &'static [&'static str],
+        side: usize,
+        pages: &'static [Pg],
         anim: PanelAnim,
     ) -> Element<'static, ParticulaMessage> {
         if anim.opacity < 0.03 {
             return iced::widget::space().width(Length::Fixed(0.0)).into();
         }
-        let rows = ids
+        let page = pages[anim.page.min(pages.len().saturating_sub(1))];
+        let mode = snapshot("position_mode", &self.param_map)
+            .map(|s| s.value as usize)
+            .unwrap_or(1);
+        let rows = page
+            .1
             .iter()
-            .map(|id| self.param_row(id))
+            .filter(|(_, cond)| *cond == 0 || usize::from(*cond) == mode + 1)
+            .map(|(id, _)| self.param_row(id))
             .collect::<Vec<_>>();
+
+        // Page picker row (top of the panel).
+        let mut pickers: Vec<Element<'static, ParticulaMessage>> = Vec::new();
+        for (i, (ptitle, _)) in pages.iter().enumerate() {
+            let active = i == anim.page;
+            let num = ptitle.split(' ').next().unwrap_or("·");
+            pickers.push(
+                button(
+                    text(num)
+                        .font(MONO)
+                        .size(9)
+                        .color(if active { TEXT } else { TEXT_FAINT }),
+                )
+                .on_press(ParticulaMessage::PanelPage { side, page: i })
+                .style(page_button_style(active))
+                .padding([3, 5])
+                .into(),
+            );
+        }
+
+        let page_rows = if rows.is_empty() {
+            vec![iced::widget::space().into()]
+        } else {
+            rows
+        };
+
         container(
             column![
-                text(title).font(MONO).size(10).color(TEXT_DIM),
+                row![
+                    text(page.0).font(MONO).size(10).color(TEXT_DIM),
+                    iced::widget::space().width(Length::Fill),
+                ]
+                .align_y(iced::Alignment::Center),
+                row(pickers).spacing(4),
                 iced::widget::space().height(4),
-                column(rows).spacing(2),
+                column(page_rows).spacing(2),
             ]
             .padding([18, 22]),
         )
@@ -681,6 +786,27 @@ fn panel_style(
             ..Default::default()
         },
         ..container::Style::default()
+    }
+}
+
+fn page_button_style(active: bool) -> impl Fn(&iced::Theme, button::Status) -> button::Style + 'static {
+    move |_: &iced::Theme, status: button::Status| {
+        let border = if active || matches!(status, button::Status::Hovered | button::Status::Pressed) {
+            LINE
+        } else {
+            Color::TRANSPARENT
+        };
+        button::Style {
+            background: None,
+            text_color: TEXT,
+            border: iced::Border {
+                color: border,
+                width: 1.0,
+                radius: 0.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
     }
 }
 
