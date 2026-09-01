@@ -1,6 +1,6 @@
 # Particula — 实验性声音设计粒子效果器 · 架构文档
 
-> 状态：v0 / v1 / v2·WSOLA 纹理层 已实现并通过 15 个测试；剩余 v2 项：BPM sync、stereo、CLAP 导出。
+> 状态：v0 / v1 / v2·WSOLA 纹理层 / v2·BPM sync 已实现并通过 19 个测试；剩余：stereo、UI/CLAP 导出。
 > 关联代码库：`i_am_dsp`（workspace 根：`i_am_dsp/Cargo.toml`）。particula 计划成为该 workspace 的第 6 个成员。
 
 ## 1. 定位与目标
@@ -105,13 +105,12 @@
 - 调度模式：`FreeRun`（按采样/秒密度）或 `Beats`（BPM 量化，见 §7）。
 - 可复现性：引擎含固定随机种子开关，便于复现实验 patch。
 
-## 7. BPM Sync
+## 7. BPM Sync ✅
 
-- 数据源：`ProcessContext::infos()` → `ProcessInfos { tempo: Option<f32>, trustable, playing, current_bar_number, … }`（`lib.rs:287`）。
-- 工具：`tools/bpm_syncer.rs` —— `next_k(bpm, samples)` 按块累加分数拍相位（支持动态 BPM），`read()` 读当前拍位，`reset()` 归零。
-- 用法：引擎每 block 用 `next_k(tempo, block_len)` 推进；Spawner 在 Beats 模式按拍相位跨过量化阈值触发（如每 1/16 拍）。
-- 回退：`tempo` 为 None / 不 trustable / 未播放 → 回退到用户设定默认 BPM 或 FreeRun。
-- 传输重启（`playing` false→true）：`reset()` 或从 `current_bar_number` 重建相位，避免偏移漂移。
+- **已实现**：引擎每样本取有效 tempo（`trustable && playing && tempo.is_some()` 时用 `ProcessInfos.tempo`，否则 `fallback_bpm`）喂给 `tools/bpm_syncer.rs` 积分拍相位；`spawn_sync` 开启时按 `spawn_interval_beats`（1/32..16 拍）的拍边界触发出生，关闭时回到毫秒 FreeRun。
+- **传输重启**：`playing` false→true 时 `reset()` 拍相位并重置下一个出生拍点（下一拍才出生，测试覆盖）。
+- 采样率变化时重建 `BpmSyncer`。
+- 离线/无 host 场景自动走 fallback 路径（demo 用 `fallback_bpm` 依然呈现 beat 量化密度）。
 - 扩展（后续）：LFO 周期按拍、envelope 时长按拍、节奏 gate 模式、整小节 pattern 门控（用 `current_bar_number`）。
 
 ## 8. 反馈路径与稳定性（汇总）
@@ -150,12 +149,12 @@
 
 - **v0 ✅**：mono 粒子云 —— 读点(三次插值) + 位置平滑 + envelope(-60dB) + 出生规则(等差+抖动+指数衰减) + 成本验证。
 - **v1 ✅**：串行反馈（`feedback_delay` 注入点 + 阻尼 + soft-clip）+ 峰值跟随 position（`position_mode=3`，周期更新近窗峰值）。
-- **v2**：WSOLA 纹理层 ✅ + BPM sync ⏳ + stereo ⏳ + UI/CLAP ⏳。
+- **v2**：WSOLA 纹理层 ✅ + BPM sync ✅ + stereo ⏳ + UI/CLAP ⏳。
 
 ## 13. 待定项 / TODO
 
 - `RingBuffer::resize()` 运行时容量变化的 UI 策略（清空 vs 双 buffer 过渡）。
 - 峰值跟随目前取近窗全局峰值；如需"当前位置附近局部峰值吸附"（用户原话），加局部搜索模式。
 - 反馈 t 边缘与插值窗口的读写混叠文档。
-- BPM reset / transport 重启策略细节。
+- ~~BPM reset / transport 重启策略~~ ✅（playing false→true 时相位归零，测试覆盖）。
 - ~~纹理层交叉淡化参数~~ ✅（`texture_crossfade_ms`）。

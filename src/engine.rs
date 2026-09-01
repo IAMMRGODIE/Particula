@@ -2,7 +2,7 @@
 
 use std::f32::consts::PI;
 
-use i_am_dsp::{Effect, ProcessContext, tools::ring_buffer::RingBuffer};
+use i_am_dsp::{Effect, ProcessContext, tools::{bpm_syncer::BpmSyncer, ring_buffer::RingBuffer}};
 use i_am_dsp_derive::Parameters;
 
 use crate::{
@@ -44,6 +44,13 @@ pub struct ParticulaEngine {
     pub spawn_interval_ms: f32,
     #[range(min = 1.0, max = 256.0)]
     pub max_particles: f32,
+
+    // Spawn timing sync (v2 BPM sync, Architecture.md sec.7).
+    pub spawn_sync: bool,
+    #[range(min = 0.03125, max = 16.0)]
+    pub spawn_interval_beats: f32,
+    #[range(min = 20.0, max = 300.0)]
+    pub fallback_bpm: f32,
 
     // Spawn rule: arithmetic position sequence + jitter + exp strength decay.
     #[range(min = 0.0, max = 1.0)]
@@ -124,6 +131,12 @@ pub struct ParticulaEngine {
     #[skip]
     history: RingBuffer<f32>,
     #[skip]
+    bpm: BpmSyncer,
+    #[skip]
+    next_spawn_beat: f32,
+    #[skip]
+    was_playing: bool,
+    #[skip]
     texture: Texture,
     #[skip]
     slots: Vec<Option<Particle>>,
@@ -163,6 +176,9 @@ impl ParticulaEngine {
             wet: 0.8,
             spawn_interval_ms: 40.0,
             max_particles: 64.0,
+            spawn_sync: false,
+            spawn_interval_beats: 0.25,
+            fallback_bpm: 120.0,
             base_position: 0.5,
             position_step: 0.0,
             position_jitter: 0.02,
@@ -193,6 +209,9 @@ impl ParticulaEngine {
             texture_stretch: 1.0,
             texture_crossfade_ms: 12.0,
             history: RingBuffer::new(history_capacity.max(1)),
+            bpm: BpmSyncer::new(sample_rate.max(1)),
+            next_spawn_beat: 0.25,
+            was_playing: false,
             texture: Texture::new(
                 (0.085 * sample_rate as f32) as usize,
                 sample_rate.max(1),
@@ -291,6 +310,8 @@ impl ParticulaEngine {
         // rate (their Hilbert/Biquad coefficients); a sample-rate change only
         // affects newly spawned particles. TODO: rebuild live particle state.
         self.sample_rate = sample_rate;
+        self.bpm = BpmSyncer::new(sample_rate.max(1));
+        self.next_spawn_beat = self.spawn_interval_beats.max(0.03125);
     }
 }
 
@@ -322,10 +343,35 @@ impl Effect<1> for ParticulaEngine {
         self.history.push(input);
         self.sample_count += 1;
 
-        // 2. spawn scheduling (pure parameter-driven, audio thread resident;
-        //    see Architecture.md sec.6).
-        let interval = ((self.spawn_interval_ms * sample_rate as f32 / 1000.0).max(1.0)) as usize;
-        if self.spawner.poll(self.sample_count, interval) {
+        // 2b. BPM sync accumulator + transport restart detection
+        //     (Architecture.md sec.7).
+        let tempo = if infos.trustable && infos.playing {
+            infos.tempo.filter(|t| *t > 0.0).unwrap_or(self.fallback_bpm)
+        } else {
+            self.fallback_bpm
+        };
+        self.bpm.next_k(tempo, 1);
+        if infos.playing && !self.was_playing {
+            // Transport restart: re-align the beat phase to 0.
+            self.bpm.reset();
+            self.next_spawn_beat = self.spawn_interval_beats.max(0.03125);
+        }
+        self.was_playing = infos.playing;
+
+        // 3. spawn scheduling: beat-quantized when spawn_sync, otherwise a
+        //    free-running millisecond interval (Architecture.md sec.6/7).
+        let spawn_due = if self.spawn_sync {
+            let due = self.bpm.read() >= self.next_spawn_beat;
+            if due {
+                self.next_spawn_beat += self.spawn_interval_beats.max(0.03125);
+            }
+            due
+        } else {
+            let interval = ((self.spawn_interval_ms * sample_rate as f32 / 1000.0).max(1.0))
+                as usize;
+            self.spawner.poll(self.sample_count, interval)
+        };
+        if spawn_due {
             self.spawner.bump_sequence();
             let lives = self.live_count();
             if lives < self.max_particles.max(1.0) as usize && lives < DEFAULT_POOL_CAPACITY {

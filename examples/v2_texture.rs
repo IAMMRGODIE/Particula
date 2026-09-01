@@ -83,7 +83,10 @@ fn main() -> std::io::Result<()> {
     engine.feedback_delay_ms = 18.0;
     engine.feedback_damping_hz = 2500.0;
 
-    // v2: WSOLA texture layer.
+    // v2: BPM sync (offline -> fallback_bpm path) + WSOLA texture layer.
+    engine.spawn_sync = true;
+    engine.spawn_interval_beats = 0.25;
+    engine.fallback_bpm = 120.0;
     engine.texture_blend = 0.65;
     engine.texture_window_ms = 120.0;
     engine.texture_refresh_ms = 60.0;
