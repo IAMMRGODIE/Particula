@@ -327,7 +327,9 @@ impl ParticulaView {
             row![
                 button(sigil_mark(26.0))
                     .on_press(ParticulaMessage::ShowAbout(true))
-                    .style(flat_button),
+                    .style(flat_button)
+                    .padding([2, 3])
+                    .width(Length::Shrink),
                 text("P A R T I C U L A").font(DISPLAY).size(15).color(TEXT),
                 iced::widget::space().width(Length::Fill),
                 text("WET").font(MONO).size(8).color(TEXT_FAINT),
@@ -389,7 +391,10 @@ impl ParticulaView {
             (hidden, self.side_panel("02 · MATERIAL / MODULATION", RIGHT_PARAMS, self.panel_right))
         };
 
-        let body = row![left, centre, right].spacing(0);
+        let body = row![left, centre, right]
+            .spacing(0)
+            .height(Length::Fill)
+            .align_y(iced::Alignment::Center);
 
         // ---- footer ----
         let status_line = format!("{:<5} LIVE   {} SPAWNED   {} HZ", self.live(), self.spawned(), self.sample_rate());
@@ -410,10 +415,14 @@ impl ParticulaView {
         .width(Length::Fill)
         .style(panel_style(Some(BG_PANEL), LINE, 1.0, 0.0));
 
-        let base = container(column![header, body, footer].spacing(0))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding([12, 18])
+        let base = container(
+            column![header, body, footer]
+                .spacing(0)
+                .height(Length::Fill)
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .padding([12, 18])
             .style(panel_style(Some(BG), Color::TRANSPARENT, 0.0, 0.0));
 
         // ---- optional About overlay ----
@@ -432,7 +441,7 @@ impl ParticulaView {
                     button(text("CLOSE").font(MONO).size(9).color(TEXT))
                         .on_press(ParticulaMessage::ShowAbout(false))
                         .style(flat_button)
-                        .padding([6, 18]),
+                        .padding([4, 10]),
                 ]
                 .spacing(12)
                 .align_x(iced::Alignment::Center),
