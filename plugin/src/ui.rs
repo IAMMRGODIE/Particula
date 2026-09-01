@@ -304,6 +304,9 @@ pub struct ParticulaView {
     ring_phases: [f32; RINGS],
     /// Slow whole-pattern rotation (radians).
     bg_phase: f32,
+    /// Shuffled dot-number order: lights follow a randomized sequence across
+    /// all rings instead of lighting up ring-by-ring in fixed order.
+    slot_order: Vec<usize>,
 
     /// Panel fade animation.
     panel_left: PanelAnim,
@@ -383,6 +386,7 @@ impl ParticulaView {
             next_dot: 0,
             ring_phases: [0.0; RINGS],
             bg_phase: 0.0,
+            slot_order: shuffled_slots(),
             panel_left: PanelAnim::hidden(),
             panel_right: PanelAnim::hidden(),
             about: false,
@@ -430,8 +434,9 @@ impl ParticulaView {
         {
             let rx = self.spawn_rx.lock().expect("spawn receiver lock");
             for ev in rx.try_iter() {
-                let ring = self.next_dot % RINGS;
-                let slot = (self.next_dot / RINGS) % DOTS_PER_RING;
+                let dot_idx = self.slot_order[self.next_dot % self.slot_order.len()];
+                let ring = dot_idx % RINGS;
+                let slot = (dot_idx / RINGS) % DOTS_PER_RING;
                 let sr = if self.stats[2].load(std::sync::atomic::Ordering::Relaxed) == 0 {
                     48_000.0
                 } else {
@@ -550,7 +555,7 @@ impl ParticulaView {
         };
 
         let body = row![left, centre, right]
-            .spacing(0)
+            .spacing(12)
             .height(Length::Fill)
             .align_y(iced::Alignment::Center);
 
@@ -670,7 +675,7 @@ impl ParticulaView {
             .iter()
             .filter(|(_, cond)| *cond == 0 || usize::from(*cond) == mode + 1)
             .count();
-        104.0 + rows as f32 * 36.0
+        96.0 + rows as f32 * 30.0
     }
 
     fn panel_page(&self, side: usize) -> usize {
@@ -687,7 +692,7 @@ impl ParticulaView {
         pages: &'static [Pg],
         anim: PanelAnim,
     ) -> Element<'static, ParticulaMessage> {
-        if anim.opacity < 0.03 {
+        if anim.opacity < 0.01 {
             return iced::widget::space().width(Length::Fixed(0.0)).into();
         }
         let page = pages[anim.page.min(pages.len().saturating_sub(1))];
@@ -741,11 +746,11 @@ impl ParticulaView {
             column![
                 title_bar,
                 iced::widget::space().height(6),
-                column(page_rows).spacing(6),
+                column(page_rows).spacing(8),
             ]
             .padding([20, 24]),
         )
-        .width(Length::Fixed((anim.opacity * 300.0 + 14.0).max(14.0)))
+        .width(Length::Fixed(anim.opacity * 300.0))
         .height(Length::Fixed(anim.height.max(20.0)))
         .style(panel_style(None, LINE, 1.0, 0.0))
         .into()
@@ -778,8 +783,7 @@ impl ParticulaView {
             .align_y(iced::Alignment::Center)
             .spacing(8),
         )
-        .padding([8, 14])
-        .style(panel_style(None, LINE, 1.0, 0.0))
+        .padding([4, 14])
         .into()
     }
 }
@@ -939,6 +943,18 @@ fn slider_style(a: f32) -> impl Fn(&iced::Theme, slider::Status) -> slider::Styl
 }
 
 // -------------------------------- the sigil ---------------------------------
+/// Slot numbers 0..RINGS*DOTS_PER_RING in a fixed, shuffled order (lighting
+/// appears scattered across every ring rather than sequential).
+fn shuffled_slots() -> Vec<usize> {
+    let mut order: Vec<usize> = (0..RINGS * DOTS_PER_RING).collect();
+    let mut rng = SplitMix64::new(0x51A6);
+    for i in (1..order.len()).rev() {
+        let j = (rng.next_u64() % (i as u64 + 1)) as usize;
+        order.swap(i, j);
+    }
+    order
+}
+
 /// Vertices of a regular polygon around `center`.
 fn polygon_points(
     n: usize,
