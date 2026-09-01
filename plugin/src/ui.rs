@@ -656,14 +656,6 @@ impl ParticulaView {
 
     /// One fading side panel with a page picker on top and mode-filtered
     /// parameter rows (condition code matches the position_mode set).
-    fn panel_page(&self, side: usize) -> usize {
-        if side == 0 {
-            self.panel_left.page
-        } else {
-            self.panel_right.page
-        }
-    }
-
     fn side_panel(
         &self,
         side: usize,
