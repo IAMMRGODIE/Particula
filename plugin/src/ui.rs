@@ -198,6 +198,8 @@ pub struct ParticulaView {
     next_dot: usize,
     /// Differential ring rotation angles (radians).
     ring_phases: [f32; RINGS],
+    /// Slow whole-pattern rotation (radians).
+    bg_phase: f32,
 
     /// Panel fade animation.
     panel_left: PanelAnim,
@@ -255,6 +257,7 @@ impl ParticulaView {
             }; DOTS_PER_RING]; RINGS],
             next_dot: 0,
             ring_phases: [0.0; RINGS],
+            bg_phase: 0.0,
             panel_left: PanelAnim::hidden(),
             panel_right: PanelAnim::hidden(),
             about: false,
@@ -291,7 +294,8 @@ impl ParticulaView {
             }
         }
 
-        // 3. Rotate the rings.
+        // 3. Rotate the rings (differential) and the whole pattern (slow).
+        self.bg_phase += 0.06 * dt;
         for (r, phase) in self.ring_phases.iter_mut().enumerate() {
             *phase += RING_SPEED[r] * dt;
         }
@@ -324,11 +328,12 @@ impl ParticulaView {
                 self.mini_slider("wet"),
                 text("DRY").font(MONO).size(8).color(TEXT_FAINT),
                 self.mini_slider("dry"),
-                self.enabled_toggler(),
+                self.enabled_button(),
             ]
             .align_y(iced::Alignment::Center)
             .spacing(10),
         )
+        .width(Length::Fill)
         .padding([12, 24])
         .style(panel_style(None, LINE, 0.0, 0.0));
 
@@ -337,6 +342,7 @@ impl ParticulaView {
             iced::widget::canvas(SigilCanvas {
                 dots: self.dots,
                 phases: self.ring_phases,
+                bg_phase: self.bg_phase,
             })
             .width(Length::Fill)
             .height(Length::Fill),
@@ -390,6 +396,7 @@ impl ParticulaView {
             .align_y(iced::Alignment::Center)
             .padding([0, 24]),
         )
+        .width(Length::Fill)
         .style(panel_style(Some(BG_PANEL), LINE, 1.0, 0.0));
 
         let base = container(column![header, body, footer].spacing(0))
@@ -444,14 +451,28 @@ impl ParticulaView {
         .into()
     }
 
-    fn enabled_toggler(&self) -> Element<'static, ParticulaMessage> {
+    /// Text ON/OFF button for the master bypass.
+    fn enabled_button(&self) -> Element<'static, ParticulaMessage> {
         let on = snapshot("enabled", &self.param_map)
             .map(|s| s.value > 0.5)
             .unwrap_or(true);
-        iced::widget::toggler::Toggler::new(on)
-            .on_toggle(ParticulaMessage::MasterEnabled)
-            .label("ON")
-            .into()
+        let map = self.param_map.clone();
+        let text_style = if on {
+            TEXT
+        } else {
+            TEXT_FAINT
+        };
+        button(text(if on { "ON" } else { "OFF" })
+            .font(MONO)
+            .size(10)
+            .color(text_style))
+        .on_press_with(move || {
+            map.set("enabled", !on, std::sync::atomic::Ordering::Relaxed);
+            ParticulaMessage::Tick
+        })
+        .style(flat_button)
+        .padding([4, 14])
+        .into()
     }
 
     /// One fading side panel with a few parameter rows.
@@ -652,10 +673,27 @@ fn slider_style(_: &iced::Theme, _: slider::Status) -> slider::Style {
 }
 
 // -------------------------------- the sigil ---------------------------------
-/// The living sigil: rings, lit dots and a radial glow, plus half-click zones.
+/// Vertices of a regular polygon around `center`.
+fn polygon_points(
+    n: usize,
+    radius: f32,
+    phase: f32,
+    center: iced::Point,
+) -> Vec<iced::Point> {
+    (0..n)
+        .map(|i| {
+            let a = phase + i as f32 / n as f32 * std::f32::consts::TAU;
+            iced::Point::new(center.x + a.cos() * radius, center.y + a.sin() * radius)
+        })
+        .collect()
+}
+
+/// The living sigil: sacred-geometry lines, particle orbits and lit dots.
 struct SigilCanvas {
     dots: [RingSlots; RINGS],
     phases: [f32; RINGS],
+    /// Slow rotation shared by the whole background pattern (radians).
+    bg_phase: f32,
 }
 
 impl<M> canvas::Program<M> for SigilCanvas {
@@ -675,78 +713,79 @@ impl<M> canvas::Program<M> for SigilCanvas {
         let c = frame.center();
         let max_r = w.min(h) * 0.5;
 
-        // Radial glow: concentric filled circles with fading alpha.
-        for i in (1..=8).rev() {
-            let r = max_r * (i as f32 / 8.0);
-            let a = (0.02 * i as f32).clamp(0.0, 0.12);
-            frame.fill(
-                &canvas::Path::circle(c, r),
-                Color::from_rgba(1.0, 1.0, 1.0, a),
-            );
+        use iced::widget::canvas::{Path, Stroke};
+        let hairline = |a: f32| Stroke {
+            width: 1.0,
+            style: canvas::Style::Solid(Color::from_rgba(1.0, 1.0, 1.0, a)),
+            ..Stroke::default()
+        };
+
+        // Sacred geometry (homology floral rose): flower of six circles,
+        // inscribed diamond, double triangle (hexagram), node dots. Drawn with
+        // straight lines / hairlines only; the whole pattern breathes at a
+        // slow rate.
+        let bg = self.bg_phase;
+
+        // Flower: six circles orbit around the centre.
+        let flower_center_r = max_r * 0.46;
+        let petal_r = max_r * 0.34;
+        for i in 0..6_usize {
+            let a = bg + i as f32 / 6.0 * std::f32::consts::TAU;
+            let pc = iced::Point::new(c.x + a.cos() * flower_center_r, c.y + a.sin() * flower_center_r);
+            frame.stroke(&Path::circle(pc, petal_r), hairline(0.05));
         }
 
-        // Three rings, differential rotation.
+        // Diamond (inscribed square, rotated).
+        let quad = polygon_points(4, max_r * 0.62, bg + 0.25 * std::f32::consts::PI, c);
+        for i in 0..4_usize {
+            frame.stroke(&Path::line(quad[i], quad[(i + 1) % 4]), hairline(0.12));
+        }
+
+        // Double triangle (hexagram).
+        let tri_a = polygon_points(3, max_r * 0.48, bg + std::f32::consts::PI / 6.0, c);
+        let tri_b = polygon_points(3, max_r * 0.48, bg + std::f32::consts::PI / 6.0 + std::f32::consts::PI, c);
+        for tri in [&tri_a, &tri_b] {
+            for i in 0..3_usize {
+                frame.stroke(&Path::line(tri[i], tri[(i + 1) % 3]), hairline(0.16));
+            }
+        }
+
+        // Node dots at the vertices.
+        for p in quad.iter().chain(tri_a.iter()).chain(tri_b.iter()) {
+            frame.fill(&Path::circle(*p, 1.2), Color::from_rgba(1.0, 1.0, 1.0, 0.22));
+        }
+
+        // Three particle orbits, differential rotation.
         for (ring, &phase) in self.phases.iter().enumerate() {
-            let r = max_r * (0.72 - ring as f32 * 0.18);
-            frame.stroke(
-                &canvas::Path::circle(c, r),
-                canvas::Stroke {
-                    width: 1.0,
-                    style: canvas::Style::Solid(Color::from_rgba(1.0, 1.0, 1.0, 0.14)),
-                    ..canvas::Stroke::default()
-                },
-            );
+            let r = max_r * (0.80 - ring as f32 * 0.16);
+            frame.stroke(&Path::circle(c, r), hairline(0.12));
 
             // Dots: faint skeleton + lit spawns.
             for slot in 0..DOTS_PER_RING {
                 let base_angle = slot as f32 / DOTS_PER_RING as f32 * std::f32::consts::TAU;
                 let angle = base_angle + phase;
-                let dot_pos = iced::Point::new(
-                    c.x + angle.cos() * r,
-                    c.y + angle.sin() * r,
-                );
+                let dot_pos = iced::Point::new(c.x + angle.cos() * r, c.y + angle.sin() * r);
                 let d = &self.dots[ring][slot];
-                // Only draw faint skeleton dots where no particle is lit.
                 let alpha = dot_alpha(d);
                 if alpha > 0.02 {
-                    frame.fill(
-                        &canvas::Path::circle(dot_pos, 2.6),
-                        Color::from_rgba(1.0, 1.0, 1.0, alpha),
-                    );
+                    frame.fill(&Path::circle(dot_pos, 2.6), Color::from_rgba(1.0, 1.0, 1.0, alpha));
                 } else {
-                    frame.fill(
-                        &canvas::Path::circle(dot_pos, 1.2),
-                        Color::from_rgba(1.0, 1.0, 1.0, 0.06),
-                    );
+                    frame.fill(&Path::circle(dot_pos, 1.2), Color::from_rgba(1.0, 1.0, 1.0, 0.05));
                 }
             }
         }
 
-        // Center mark.
-        frame.stroke(
-            &canvas::Path::circle(c, max_r * 0.12),
-            canvas::Stroke {
-                width: 1.0,
-                style: canvas::Style::Solid(Color::from_rgba(1.0, 1.0, 1.0, 0.4)),
-                ..canvas::Stroke::default()
-            },
-        );
-        frame.fill(
-            &canvas::Path::circle(c, 2.0),
-            Color::from_rgba(1.0, 1.0, 1.0, 0.9),
-        );
+        // Centre: small ring + core dot.
+        frame.stroke(&Path::circle(c, max_r * 0.07), hairline(0.35));
+        frame.fill(&Path::circle(c, 2.0), Color::from_rgba(1.0, 1.0, 1.0, 0.9));
 
-        // Split indicator (faint vertical divider, left/right zones).
+        // Split indicator (faint vertical divider between the click zones).
         frame.stroke(
-            &canvas::Path::line(
+            &Path::line(
                 iced::Point::new(c.x, c.y - max_r * 0.4),
                 iced::Point::new(c.x, c.y + max_r * 0.4),
             ),
-            canvas::Stroke {
-                width: 1.0,
-                style: canvas::Style::Solid(Color::from_rgba(1.0, 1.0, 1.0, 0.08)),
-                ..canvas::Stroke::default()
-            },
+            hairline(0.06),
         );
 
         vec![frame.into_geometry()]
