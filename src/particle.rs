@@ -127,6 +127,11 @@ impl Particle {
         self.gain
     }
 
+    /// The particle's total lifetime in samples (set at birth).
+    pub fn lifetime(&self) -> usize {
+        self.lifetime
+    }
+
     /// Advance one sample and return the voice output, or None when dead.
     ///
     /// peak_t is the engine's shared peak-follow target (used only when the

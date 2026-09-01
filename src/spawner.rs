@@ -15,6 +15,17 @@ pub struct Spawn {
     pub lifetime_samples: usize,
 }
 
+/// An event emitted over the engine's crossbeam-channel notifier the moment
+/// a particle is born, so the GUI can light up a dot on the sigil and fade it
+/// over the particle's lifetime.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpawnEvent {
+    /// The particle's lifetime in samples (bright when born, off when dead).
+    pub lifetime_samples: usize,
+    /// The live particle count right after this spawn.
+    pub live: usize,
+}
+
 /// Only the *timing and sequence* state lives here; the shape of a spawn
 /// (arithmetic position sequence + jitter + exponential strength decay) is the
 /// engine's spawn rule (see `ParticulaEngine::spawn_rule_position/_gain`).

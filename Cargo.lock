@@ -3582,6 +3582,7 @@ dependencies = [
 name = "particula"
 version = "0.1.0"
 dependencies = [
+ "crossbeam-channel",
  "i_am_dsp",
  "i_am_dsp_derive",
 ]

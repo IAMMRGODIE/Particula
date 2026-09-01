@@ -6,6 +6,7 @@ description = "Experimental sound-design particle effecter (granular cloud engin
 license = "MIT"
 
 [dependencies]
+crossbeam-channel = "0.5.16"
 i_am_dsp = { path = "../i_am_dsp/i_am_dsp", default-features = false }
 i_am_dsp_derive = { path = "../i_am_dsp/i_am_dsp_derive" }
 

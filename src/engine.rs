@@ -2,6 +2,7 @@
 
 use std::f32::consts::PI;
 
+use crossbeam_channel::Sender;
 use i_am_dsp::{Effect, ProcessContext, tools::{bpm_syncer::BpmSyncer, ring_buffer::RingBuffer}};
 use i_am_dsp_derive::Parameters;
 
@@ -10,7 +11,7 @@ use crate::{
     particle::Particle,
     position_mod::PositionMod,
     rng::SplitMix64,
-    spawner::Spawner,
+    spawner::{SpawnEvent, Spawner},
     texture::Texture,
 };
 
@@ -64,6 +65,9 @@ pub struct ParticulaEngine<const CHANNELS: usize = 1> {
     pub dry: f32,
     #[range(min = 0.0, max = 1.0)]
     pub wet: f32,
+    /// Master bypass: when off the effect passes the input through untouched
+    /// (the history is left running silent and no particles are processed).
+    pub enabled: bool,
 
     #[range(min = 1.0, max = 5000.0)]
     pub spawn_interval_ms: f32,
@@ -189,6 +193,9 @@ pub struct ParticulaEngine<const CHANNELS: usize = 1> {
     #[skip]
     rng: SplitMix64,
     #[skip]
+    // GUI notification: every spawned particle is posted here (optional).
+    spawn_notifier: Option<Sender<SpawnEvent>>,
+    #[skip]
     sample_count: usize,
     #[skip]
     sample_rate: usize,
@@ -216,6 +223,7 @@ impl<const CHANNELS: usize> ParticulaEngine<CHANNELS> {
         Self {
             dry: 1.0,
             wet: 0.85,
+            enabled: true,
             spawn_interval_ms: 30.0,
             max_particles: 64.0,
             spawn_sync: false,
@@ -268,6 +276,7 @@ impl<const CHANNELS: usize> ParticulaEngine<CHANNELS> {
             free: Vec::with_capacity(DEFAULT_POOL_CAPACITY),
             spawner: Spawner::new(),
             rng: SplitMix64::new(seed),
+            spawn_notifier: None,
             sample_count: 0,
             sample_rate,
             spawn_count: 0,
@@ -279,6 +288,13 @@ impl<const CHANNELS: usize> ParticulaEngine<CHANNELS> {
     /// Reseeds the RNG (reproducible patches).
     pub fn set_seed(&mut self, seed: u64) {
         self.rng = SplitMix64::new(seed);
+    }
+
+    /// Attaches an optional spawn-event notifier. The engine posts one
+    /// `SpawnEvent` per born particle over this channel (unbounded push, no
+    /// risk of blocking the audio thread).
+    pub fn set_spawn_notifier(&mut self, tx: Sender<SpawnEvent>) {
+        self.spawn_notifier = Some(tx);
     }
 
     /// Clears the pool and the spawn sequence (keeps history).
@@ -416,6 +432,11 @@ impl<const CHANNELS: usize> Effect<CHANNELS> for ParticulaEngine<CHANNELS> {
         }
         let sample_rate = self.sample_rate;
 
+        // 0. Master bypass: straight passthrough, leave the buffer untouched.
+        if !self.enabled {
+            return;
+        }
+
         // 1. dry input: mono mix into the shared history (dry path keeps
         //    each input channel untouched).
         let dry_in = *samples;
@@ -464,6 +485,14 @@ impl<const CHANNELS: usize> Effect<CHANNELS> for ParticulaEngine<CHANNELS> {
                     });
                 self.slots[idx] = Some(self.make_particle(sample_rate));
                 self.spawn_count += 1;
+                if let Some(tx) = &self.spawn_notifier {
+                    if let Some(p) = &self.slots[idx] {
+                        let _ = tx.send(SpawnEvent {
+                            lifetime_samples: p.lifetime(),
+                            live: self.live_count(),
+                        });
+                    }
+                }
             }
         }
 
