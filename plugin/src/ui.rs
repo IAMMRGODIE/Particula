@@ -112,6 +112,17 @@ pub fn snapshot(id: &'static str, map: &ParamMap) -> Option<ParamSnapshot> {
     })
 }
 
+/// Whether a parameter row shows based on mode / spawn-sync conditions.
+fn cond_matches(cond: u8, mode: usize, sync_on: bool) -> bool {
+    match cond {
+        0 => true,
+        1..=4 => usize::from(cond) == mode + 1,
+        5 => sync_on,
+        6 => !sync_on,
+        _ => false,
+    }
+}
+
 /// Human names for integer parameters (falls back to numeric 0..n).
 fn discrete_options(id: &str) -> &'static [&'static str] {
     match id {
@@ -124,8 +135,15 @@ fn discrete_options(id: &str) -> &'static [&'static str] {
 pub fn label(id: &str) -> String {
     let name = match id {
         "spawn_interval_ms" => "Interval",
+        "spawn_sync" => "Sync",
+        "position_mode" => "Mode",
         "max_particles" => "Pool",
         "reverse_chance" => "Reverse",
+        "random_walk_step" => "Walk Step",
+        "random_walk_interval_ms" => "Walk Int",
+        "peak_window_ms" => "Peak Win",
+        "peak_update_ms" => "Peak Upd",
+        "peak_threshold" => "Peak Thr",
         "spawn_interval_beats" => "Beats",
         "fallback_bpm" => "Fallback",
         "lfo_rate_hz" => "LFO Rate",
@@ -163,16 +181,17 @@ pub fn label(id: &str) -> String {
 
 /// Page tables for the side panels.
 /// condition codes: 0 = always, 1 = Fixed mode, 2 = LFO mode,
-/// 3 = RandomWalk mode, 4 = PeakFollow mode.
+/// 3 = RandomWalk mode, 4 = PeakFollow mode, 5 = spawn_sync on,
+/// 6 = spawn_sync off.
 type Pg = (&'static str, &'static [(&'static str, u8)]);
 
 const LEFT_PAGES: &[Pg] = &[
     (
         "I · SPAWN",
         &[
-            ("spawn_interval_ms", 0),
+            ("spawn_interval_ms", 6),
             ("spawn_sync", 0),
-            ("spawn_interval_beats", 0),
+            ("spawn_interval_beats", 5),
             ("fallback_bpm", 0),
             ("max_particles", 0),
             ("reverse_chance", 0),
@@ -681,10 +700,13 @@ impl ParticulaView {
         let mode = snapshot("position_mode", &self.param_map)
             .map(|s| s.value as usize)
             .unwrap_or(1);
+        let sync_on = snapshot("spawn_sync", &self.param_map)
+            .map(|s| s.value > 0.5)
+            .unwrap_or(false);
         let rows = page
             .1
             .iter()
-            .filter(|(_, cond)| *cond == 0 || usize::from(*cond) == mode + 1)
+            .filter(|(_, cond)| cond_matches(*cond, mode, sync_on))
             .count();
         // Header bar (tabs + title) + top/bottom padding; rows at ~30 px each.
         72.0 + rows as f32 * 30.0
@@ -713,12 +735,15 @@ impl ParticulaView {
         let mode = snapshot("position_mode", &self.param_map)
             .map(|s| s.value as usize)
             .unwrap_or(1);
+        let sync_on = snapshot("spawn_sync", &self.param_map)
+            .map(|s| s.value > 0.5)
+            .unwrap_or(false);
         // Page-transition cursor drives the content crossfade.
         let a = 1.0 - anim.fade * 0.72;
         let rows = page
             .1
             .iter()
-            .filter(|(_, cond)| *cond == 0 || usize::from(*cond) == mode + 1)
+            .filter(|(_, cond)| cond_matches(*cond, mode, sync_on))
             .map(|(id, _)| self.param_row(id, a))
             .collect::<Vec<_>>();
 
@@ -763,7 +788,7 @@ impl ParticulaView {
             ]
             .padding([20, 24]),
         )
-        .width(Length::Fixed(anim.opacity * 300.0))
+        .width(Length::Fixed(anim.opacity * 320.0))
         .height(Length::Fixed(anim.height.max(20.0)))
         .style(panel_style(None, LINE, 1.0, 0.0))
         .into()
@@ -847,7 +872,8 @@ impl ParticulaView {
                     value: i as f32,
                 })
                 .style(page_button_style(active))
-                .padding([2, 8])
+                .padding([2, 4])
+                .width(Length::FillPortion(1))
                 .into(),
             );
         }
@@ -858,7 +884,7 @@ impl ParticulaView {
                     .size(9)
                     .color(Color::from_rgba(0.60, 0.60, 0.60, a))
                     .width(Length::Fixed(76.0)),
-                row(buttons).spacing(4),
+                row(buttons).spacing(4).width(Length::Fill),
             ]
             .align_y(iced::Alignment::Center)
             .spacing(8),
@@ -1005,25 +1031,47 @@ fn page_button_style(active: bool) -> impl Fn(&iced::Theme, button::Status) -> b
 }
 
 /// A faint chevron hinting the clickable half (fades out while the panel
-/// on that side is visible).
+/// on that side is visible). Drawn as a canvas triangle, not an emoji.
 fn hint_arrow(alpha: f32, left: bool) -> Element<'static, ParticulaMessage> {
-    let a = alpha.clamp(0.0, 1.0) * 0.55;
-    container(
-        text(if left { "◀" } else { "▶" })
-            .font(DISPLAY)
-            .size(20)
-            .color(Color::from_rgba(1.0, 1.0, 1.0, a)),
-    )
+    iced::widget::canvas(HintChevron {
+        left,
+        a: alpha.clamp(0.0, 1.0) * 0.6,
+    })
     .width(Length::Fill)
     .height(Length::Fill)
-    .align_x(if left {
-        iced::Alignment::Start
-    } else {
-        iced::Alignment::End
-    })
-    .align_y(iced::Alignment::Center)
-    .padding([0, 16])
     .into()
+}
+
+struct HintChevron {
+    left: bool,
+    a: f32,
+}
+
+impl<M> canvas::Program<M> for HintChevron {
+    type State = ();
+    fn draw(
+        &self,
+        _: &Self::State,
+        renderer: &iced::Renderer,
+        _: &iced::Theme,
+        bounds: iced::Rectangle,
+        _: iced::mouse::Cursor,
+    ) -> Vec<canvas::Geometry> {
+        use iced::widget::canvas::Path;
+        let mut frame = canvas::Frame::new(renderer, bounds.size());
+        let cy = bounds.height * 0.5;
+        let tip_x = if self.left { 20.0 } else { bounds.width - 20.0 };
+        let dir: f32 = if self.left { 1.0 } else { -1.0 };
+        let s = 8.0;
+        let tri = Path::new(|builder| {
+            builder.move_to(iced::Point::new(tip_x, cy));
+            builder.line_to(iced::Point::new(tip_x - dir * s, cy - s * 0.8));
+            builder.line_to(iced::Point::new(tip_x - dir * s, cy + s * 0.8));
+            builder.close();
+        });
+        frame.fill(&tri, Color::from_rgba(1.0, 1.0, 1.0, self.a));
+        vec![frame.into_geometry()]
+    }
 }
 
 fn flat_button(_: &iced::Theme, status: button::Status) -> button::Style {
