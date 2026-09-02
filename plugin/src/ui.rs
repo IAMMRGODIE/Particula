@@ -112,6 +112,30 @@ pub fn snapshot(id: &'static str, map: &ParamMap) -> Option<ParamSnapshot> {
     })
 }
 
+/// Parameters whose slider should use a logarithmic scale (all have min > 0).
+const LOG_PARAMS: &[&str] = &[
+    "spawn_interval_ms",
+    "lifetime_ms_min",
+    "lifetime_ms_max",
+    "fallback_bpm",
+    "lfo_rate_hz",
+    "position_smooth_ms",
+    "texture_window_ms",
+    "texture_refresh_ms",
+    "texture_crossfade_ms",
+    "texture_stretch",
+    "pitch_min",
+    "pitch_max",
+    "gain_decay_ratio",
+    "random_walk_interval_ms",
+    "peak_window_ms",
+    "peak_update_ms",
+];
+
+fn log_param(id: &str) -> bool {
+    LOG_PARAMS.contains(&id)
+}
+
 /// Whether a parameter row shows based on mode / spawn-sync conditions.
 fn cond_matches(cond: u8, mode: usize, sync_on: bool) -> bool {
     match cond {
@@ -584,18 +608,21 @@ impl ParticulaView {
             .height(Length::Fill);
 
         // ---- side panel (exactly one visible at a time) ----
-        let hidden: Element<'static, ParticulaMessage> =
-            iced::widget::space().width(Length::Fixed(0.0)).into();
-        let (left, right) = if self.panel_left.opacity >= self.panel_right.opacity {
-            (self.side_panel(0, LEFT_PAGES, self.panel_left), hidden)
-        } else {
-            (hidden, self.side_panel(1, RIGHT_PAGES, self.panel_right))
-        };
-
-        let body = row![left, centre, right]
-            .spacing(12)
+        // Panels float as overlay layers; the sigil stays perfectly centred
+        // regardless of whether a panel fades in/out.
+        let left_overlay = container(self.side_panel(0, LEFT_PAGES, self.panel_left))
+            .width(Length::Fill)
             .height(Length::Fill)
+            .align_x(iced::Alignment::Start)
             .align_y(iced::Alignment::Center);
+        let right_overlay = container(self.side_panel(1, RIGHT_PAGES, self.panel_right))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(iced::Alignment::End)
+            .align_y(iced::Alignment::Center);
+        let body = iced::widget::stack![centre, left_overlay, right_overlay]
+            .width(Length::Fill)
+            .height(Length::Fill);
 
         // ---- footer ----
         let status_line = format!("{:<5} LIVE   {} SPAWNED   {} HZ", self.live(), self.spawned(), self.sample_rate());
@@ -837,6 +864,15 @@ impl ParticulaView {
         let Some(snap) = snapshot(id, &self.param_map) else {
             return iced::widget::space().into();
         };
+        // Logarithmic scale for time/freq/stretch/pitch params: the slider
+        // works on ln(value), writes are un-logged back to the real value.
+        let log_scale = log_param(id) && snap.min > 0.0;
+        let (lo, hi, disp) = if log_scale {
+            let (lmin, lmax) = (snap.min.ln(), snap.max.ln());
+            (lmin, lmax, snap.value.max(snap.min).ln())
+        } else {
+            (snap.min, snap.max, snap.value)
+        };
         container(
             row![
                 text(label(id))
@@ -844,10 +880,11 @@ impl ParticulaView {
                     .size(9)
                     .color(Color::from_rgba(0.60, 0.60, 0.60, a))
                     .width(Length::Fixed(76.0)),
-                slider(snap.min..=snap.max, snap.value, move |v| {
-                    ParticulaMessage::Param { id, value: v }
+                slider(lo..=hi, disp, move |v| {
+                    let value = if log_scale { v.exp() } else { v };
+                    ParticulaMessage::Param { id, value }
                 })
-                .step(nice_step(snap.min, snap.max))
+                .step(nice_step(lo, hi))
                 .style(slider_style(a)),
                 text(format!("{:.2}", snap.value))
                     .font(MONO)

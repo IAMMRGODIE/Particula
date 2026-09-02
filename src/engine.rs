@@ -63,7 +63,9 @@ pub struct ParticulaEngine<const CHANNELS: usize = 1> {
     // --- live-tweakable parameters (host-visible) ---
     #[range(min = 0.0, max = 1.0)]
     pub dry: f32,
-    #[range(min = 0.0, max = 1.0)]
+    /// Wet mix / output compensation gain: allowed beyond 1.0 (up to +12 dB)
+    /// to make up for a quiet particle bed.
+    #[range(min = 0.0, max = 4.0)]
     pub wet: f32,
     /// Master bypass: when off the effect passes the input through untouched
     /// (the history is left running silent and no particles are processed).
