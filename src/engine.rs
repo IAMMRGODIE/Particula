@@ -224,7 +224,7 @@ impl<const CHANNELS: usize> ParticulaEngine<CHANNELS> {
     pub fn new(history_capacity: usize, sample_rate: usize, seed: u64) -> Self {
         Self {
             dry: 1.0,
-            wet: 0.85,
+            wet: 1.0,
             enabled: true,
             spawn_interval_ms: 30.0,
             max_particles: 64.0,

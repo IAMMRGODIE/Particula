@@ -56,6 +56,8 @@ const PANEL_TAU: f32 = 7.0;
 #[derive(Debug, Clone)]
 pub enum ParticulaMessage {
     Param { id: &'static str, value: f32 },
+    /// Double-clicking a slider restores its factory default.
+    ParamReset { id: &'static str },
     ToggleLeft,
     ToggleRight,
     PanelPage { side: usize, page: usize },
@@ -428,6 +430,12 @@ impl i_am_dsp_iced::SyncedView for ParticulaView {
                 set_param_as(&self.param_map, id, *value);
                 self.randomize_pending.retain(|(pid, _)| pid != id);
             }
+            ParticulaMessage::ParamReset { id } => {
+                if let Some((_, def)) = DEFAULTS.iter().find(|(p, _)| p == id) {
+                    set_param_as(&self.param_map, id, *def);
+                    self.randomize_pending.retain(|(pid, _)| pid != id);
+                }
+            }
         }
     }
 
@@ -550,9 +558,9 @@ impl ParticulaView {
         // returning the instant the panel closes; easing is faster than the
         // fade so the pattern never lags behind.
         let shift_target = if self.panel_left.target && self.panel_left.opacity > 0.004 {
-            110.0
+            155.0
         } else if self.panel_right.target && self.panel_right.opacity > 0.004 {
-            -110.0
+            -155.0
         } else {
             0.0
         };
@@ -722,14 +730,17 @@ impl ParticulaView {
         };
         let map = self.param_map.clone();
         let (lo, hi, disp, log_scale) = slider_domain(id, s.min, s.max, s.value);
-        slider(lo..=hi, disp, move |v| {
-            let value = if log_scale { v.exp() } else { v };
-            map.set(id, value, std::sync::atomic::Ordering::Relaxed);
-            ParticulaMessage::Tick
-        })
-        .step(nice_step(lo, hi))
-        .width(Length::Fixed(90.0))
-        .style(slider_style(1.0))
+        iced::widget::mouse_area(
+            slider(lo..=hi, disp, move |v| {
+                let value = if log_scale { v.exp() } else { v };
+                map.set(id, value, std::sync::atomic::Ordering::Relaxed);
+                ParticulaMessage::Tick
+            })
+            .step(nice_step(lo, hi))
+            .width(Length::Fixed(90.0))
+            .style(slider_style(1.0)),
+        )
+        .on_double_click(ParticulaMessage::ParamReset { id })
         .into()
     }
 
@@ -903,12 +914,15 @@ impl ParticulaView {
                     .size(9)
                     .color(Color::from_rgba(0.60, 0.60, 0.60, a))
                     .width(Length::Fixed(76.0)),
-                slider(lo..=hi, disp, move |v| {
-                    let value = if log_scale { v.exp() } else { v };
-                    ParticulaMessage::Param { id, value }
-                })
-                .step(nice_step(lo, hi))
-                .style(slider_style(a)),
+                iced::widget::mouse_area(
+                    slider(lo..=hi, disp, move |v| {
+                        let value = if log_scale { v.exp() } else { v };
+                        ParticulaMessage::Param { id, value }
+                    })
+                    .step(nice_step(lo, hi))
+                    .style(slider_style(a)),
+                )
+                .on_double_click(ParticulaMessage::ParamReset { id }),
                 text(format!("{:.2}", snap.value))
                     .font(MONO)
                     .size(9)
@@ -975,6 +989,52 @@ impl ParticulaView {
 }
 
 // -------------------------------- randomize ---------------------------------
+/// Factory defaults, mirroring the engine's initial parameter values.
+/// (AtomicValue carries no default, so the GUI keeps its own copy.)
+const DEFAULTS: &[(&'static str, f32)] = &[
+    ("dry", 1.0),
+    ("wet", 0.85),
+    ("enabled", 1.0),
+    ("spawn_interval_ms", 30.0),
+    ("spawn_sync", 0.0),
+    ("spawn_interval_beats", 0.25),
+    ("fallback_bpm", 120.0),
+    ("max_particles", 64.0),
+    ("reverse_chance", 0.0),
+    ("base_position", 0.9),
+    ("position_step", 0.0),
+    ("position_jitter", 0.02),
+    ("gain_decay_ratio", 0.9),
+    ("min_gain_ratio", 0.05),
+    ("initial_gain", 0.5),
+    ("attack_ms", 10.0),
+    ("lifetime_ms_min", 100.0),
+    ("lifetime_ms_max", 1200.0),
+    ("pitch_min", 0.5),
+    ("pitch_max", 1.5),
+    ("freq_shift_min", -120.0),
+    ("freq_shift_max", 120.0),
+    ("position_smooth_ms", 20.0),
+    ("position_mode", 1.0),
+    ("lfo_rate_hz", 0.15),
+    ("lfo_depth", 0.15),
+    ("random_walk_step", 0.02),
+    ("random_walk_interval_ms", 200.0),
+    ("peak_window_ms", 150.0),
+    ("peak_update_ms", 30.0),
+    ("peak_threshold", 0.01),
+    ("feedback_gain", 0.0),
+    ("feedback_delay_ms", 40.0),
+    ("feedback_damping_hz", 3000.0),
+    ("texture_blend", 0.35),
+    ("texture_window_ms", 85.0),
+    ("texture_refresh_ms", 43.0),
+    ("texture_stretch", 1.0),
+    ("texture_crossfade_ms", 12.0),
+    ("pan_min", -0.8),
+    ("pan_max", 0.8),
+];
+
 /// Writes a f32 into the map with the parameter's actual atomic type
 /// (Bool / Int / Float) so discrete parameters accept clicks fine.
 fn set_param_as(map: &ParamMap, id: &str, v: f32) {
