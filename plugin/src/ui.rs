@@ -624,8 +624,8 @@ impl ParticulaView {
             ]
             .width(Length::Fill)
             .height(Length::Fill),
-            hint_arrow(self.centre_shift, 1.0 - self.panel_left.opacity, true),
-            hint_arrow(self.centre_shift, 1.0 - self.panel_right.opacity, false),
+            hint_arrow(self.panel_left.opacity * 320.0, 1.0 - self.panel_left.opacity, true),
+            hint_arrow(self.panel_right.opacity * 320.0, 1.0 - self.panel_right.opacity, false),
         ]
         .width(Length::Fill)
         .height(Length::Fill);
@@ -1109,11 +1109,11 @@ fn page_button_style(active: bool) -> impl Fn(&iced::Theme, button::Status) -> b
 
 /// A faint chevron hinting the clickable half (fades out while the panel
 /// on that side is visible). Drawn as a canvas triangle, not an emoji.
-fn hint_arrow(shift: f32, alpha: f32, left: bool) -> Element<'static, ParticulaMessage> {
+fn hint_arrow(edge: f32, alpha: f32, left: bool) -> Element<'static, ParticulaMessage> {
     iced::widget::canvas(HintChevron {
         left,
         a: alpha.clamp(0.0, 1.0) * 0.6,
-        shift,
+        edge,
     })
     .width(Length::Fill)
     .height(Length::Fill)
@@ -1123,8 +1123,9 @@ fn hint_arrow(shift: f32, alpha: f32, left: bool) -> Element<'static, ParticulaM
 struct HintChevron {
     left: bool,
     a: f32,
-    /// Follows the sigil's horizontal nudge so the chevron moves with it.
-    shift: f32,
+    /// Panel expansion width; the chevron tracks the panel's leading edge so
+    /// it moves with the panel itself (0..320), not just the sigil nudge.
+    edge: f32,
 }
 
 impl<M> canvas::Program<M> for HintChevron {
@@ -1140,10 +1141,11 @@ impl<M> canvas::Program<M> for HintChevron {
         use iced::widget::canvas::Path;
         let mut frame = canvas::Frame::new(renderer, bounds.size());
         let cy = bounds.height * 0.5;
+        // Chevron rides the panel's leading edge (inwards from the screen edge).
         let tip_x = if self.left {
-            20.0 + self.shift
+            26.0 + self.edge
         } else {
-            bounds.width - 20.0 + self.shift
+            bounds.width - 26.0 - self.edge
         };
         let dir: f32 = if self.left { 1.0 } else { -1.0 };
         let s = 8.0;
