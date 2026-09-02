@@ -44,7 +44,10 @@ fn high_density_pool_stays_cheap() {
         frames, real_time, spent, load
     );
     // Generous bound: catching pathological regressions, not micro-platform
-    // noise. Release-time load should be well under 1x already.
-    assert!(load < 8.0, "engine too slow at high density: {load:.2}x");
+    // noise. Release-time load should be well under 1x already (debug builds
+    // are 5-10x slower, so only gate the realtime envelope in release).
+    if !cfg!(debug_assertions) {
+        assert!(load < 8.0, "engine too slow at high density: {load:.2}x");
+    }
     let _ = (in_l[0], in_r[0]);
 }
