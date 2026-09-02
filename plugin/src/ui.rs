@@ -58,6 +58,8 @@ pub enum ParticulaMessage {
     Param { id: &'static str, value: f32 },
     /// Double-clicking a slider restores its factory default.
     ParamReset { id: &'static str },
+    /// Double-clicking the numeric value snaps it to the nearest power of two.
+    Snap { id: &'static str },
     ToggleLeft,
     ToggleRight,
     PanelPage { side: usize, page: usize },
@@ -265,12 +267,12 @@ const RIGHT_PAGES: &[Pg] = &[
     (
         "I · MOVEMENT",
         &[
+            ("lfo_wave", 0),
+            ("lfo_rate_beats", 5),
+            ("lfo_rate_hz", 6),
+            ("lfo_depth", 0),
             ("position_mode", 0),
             ("position_smooth_ms", 0),
-            ("lfo_wave", 0),
-            ("lfo_rate_hz", 6),
-            ("lfo_rate_beats", 5),
-            ("lfo_depth", 0),
             ("random_walk_step", 3),
             ("random_walk_interval_ms", 3),
             ("peak_window_ms", 4),
@@ -432,6 +434,12 @@ impl i_am_dsp_iced::SyncedView for ParticulaView {
             }
             ParticulaMessage::Randomize => {
                 self.randomize_pending = random_targets(&self.param_map);
+            }
+            ParticulaMessage::Snap { id } => {
+                if let Some(v) = snap_pow2_target(&self.param_map, id) {
+                    set_param_as(&self.param_map, id, v);
+                    self.randomize_pending.retain(|(pid, _)| pid != id);
+                }
             }
             ParticulaMessage::Panic => {
                 self.panic_flag
@@ -944,11 +952,14 @@ impl ParticulaView {
                 })
                 .step(nice_step(lo, hi))
                 .style(slider_style(a)),
-                text(format!("{:.2}", snap.value))
-                    .font(MONO)
-                    .size(9)
-                    .color(Color::from_rgba(0.36, 0.36, 0.36, a))
-                    .width(Length::Fixed(48.0)),
+                iced::widget::mouse_area(
+                    text(format!("{:.2}", snap.value))
+                        .font(MONO)
+                        .size(9)
+                        .color(Color::from_rgba(0.36, 0.36, 0.36, a))
+                        .width(Length::Fixed(48.0)),
+                )
+                .on_double_click(ParticulaMessage::Snap { id }),
             ]
             .align_y(iced::Alignment::Center)
             .spacing(8),
@@ -1013,6 +1024,39 @@ impl ParticulaView {
 }
 
 // -------------------------------- randomize ---------------------------------
+/// Parameters whose numeric value double-clicks snap to the nearest power
+/// of two (beats, pitch and stretch factors — easy musical alignment).
+const SNAP_POW2: &[&str] = &[
+    "spawn_interval_beats",
+    "feedback_delay_beats",
+    "lfo_rate_beats",
+    "pitch_min",
+    "pitch_max",
+    "texture_stretch",
+];
+
+/// Snap target for a parameter: nearest power of two within its range.
+fn snap_pow2_target(map: &ParamMap, id: &'static str) -> Option<f32> {
+    if !SNAP_POW2.contains(&id) {
+        return None;
+    }
+    let snap = snapshot(id, map)?;
+    let cur = snap.value.abs().max(1e-6);
+    let exp = cur.log2().round();
+    let mut v = 2.0_f32.powf(exp);
+    v = v.clamp(snap.min, snap.max);
+    // Clamping may leave it off-grid; pull back to the nearest in-range power.
+    if v == snap.max {
+        let smaller = 2.0_f32.powf((snap.max / 2.0).log2().round());
+        v = smaller.max(snap.min);
+    }
+    if v == snap.min && snap.min > 0.0 {
+        let bigger = 2.0_f32.powf((snap.min * 2.0).log2().round());
+        v = bigger.min(snap.max);
+    }
+    Some(v)
+}
+
 /// Factory defaults, mirroring the engine's initial parameter values.
 /// (AtomicValue carries no default, so the GUI keeps its own copy.)
 const DEFAULTS: &[(&str, f32)] = &[
@@ -1020,7 +1064,7 @@ const DEFAULTS: &[(&str, f32)] = &[
     ("wet", 1.0),
     ("enabled", 1.0),
     ("spawn_interval_ms", 30.0),
-    ("spawn_sync", 0.0),
+    ("spawn_sync", 1.0),
     ("spawn_interval_beats", 0.25),
     ("fallback_bpm", 120.0),
     ("max_particles", 64.0),
@@ -1029,8 +1073,8 @@ const DEFAULTS: &[(&str, f32)] = &[
     ("position_step", 0.0),
     ("position_jitter", 0.02),
     ("gain_decay_ratio", 0.9),
-    ("min_gain_ratio", 0.05),
-    ("initial_gain", 0.5),
+    ("min_gain_ratio", 0.5),
+    ("initial_gain", 0.8),
     ("attack_ms", 10.0),
     ("lifetime_ms_min", 100.0),
     ("lifetime_ms_max", 1200.0),

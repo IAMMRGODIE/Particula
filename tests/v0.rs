@@ -69,6 +69,7 @@ fn spawn_rule_is_arithmetic_with_exponential_strength_decay() {
 #[test]
 fn dc_input_reads_position_and_envelope() {
     let mut e = ParticulaEngine::<1>::new(1024, SR, 99);
+    e.spawn_sync = false;
     e.dry = 0.0;
     e.wet = 1.0;
     e.texture_blend = 0.0; // pure history read test
@@ -111,6 +112,7 @@ fn dc_input_reads_position_and_envelope() {
 #[test]
 fn single_particle_dies_and_output_goes_silent() {
     let mut e = ParticulaEngine::<1>::new(512, SR, 3);
+    e.spawn_sync = false;
     e.dry = 0.0;
     e.wet = 1.0;
     e.texture_blend = 0.0; // pure history read test

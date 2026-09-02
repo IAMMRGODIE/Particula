@@ -66,6 +66,7 @@ fn spawner_poll_fires_on_a_regular_grid() {
 #[test]
 fn free_run_spawns_every_interval_while_pool_is_not_full() {
     let mut e = ParticulaEngine::<1>::new(4096, SR, 11);
+    e.spawn_sync = false;
     e.spawn_interval_ms = 30.0;
     e.max_particles = 256.0; // never full with these lifetimes
     e.lifetime_ms_min = 500.0;
@@ -95,6 +96,7 @@ fn pooled_engine_replaces_dead_particles_continuously() {
     // Small pool + short lives: the pool saturates, but every death is
     // immediately refilled, so spawning continues for the whole run.
     let mut e = ParticulaEngine::<1>::new(2048, SR, 22);
+    e.spawn_sync = false;
     e.max_particles = 8.0;
     e.spawn_interval_ms = 5.0;
     e.lifetime_ms_min = 40.0;

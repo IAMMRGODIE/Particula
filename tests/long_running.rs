@@ -34,8 +34,10 @@ fn default_cloud_keeps_spawning_and_stays_audible() {
         "cloud went silent in the final second: rms {tail_rms}"
     );
     assert!(e.live_count() > 0, "no live particles at the end");
+    // Default spawn_sync is on: beat grid at fallback 120 BPM with a 0.25
+    // beat interval ≈ 120 spawns over 15 s (plus the pool keeps re-filling).
     assert!(
-        e.spawned() > 200,
+        e.spawned() > 100,
         "spawning should continue far past the pool limit: {}",
         e.spawned()
     );
