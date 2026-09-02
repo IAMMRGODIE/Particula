@@ -127,9 +127,9 @@ impl Processor for ParticulaProcessor {
 }
 
 impl Plugin for ParticulaProcessor {
-    const DESCRIPTOR: Descriptor = Descriptor::new("dev.particula.cloud", "Particula Cloud")
+    const DESCRIPTOR: Descriptor = Descriptor::new("dev.particula.cloud", "I Am Particula")
         .with_tags(&[Tag::AudioEffect, Tag::Granular])
-        .with_vendor("particula")
+        .with_vendor("I Am Plugins")
         .with_version(env!("CARGO_PKG_VERSION"));
 
     fn new() -> Self {

@@ -115,6 +115,7 @@ pub fn snapshot(id: &'static str, map: &ParamMap) -> Option<ParamSnapshot> {
 /// Parameters whose slider should use a logarithmic scale (all have min > 0).
 const LOG_PARAMS: &[&str] = &[
     "spawn_interval_ms",
+    "spawn_interval_beats",
     "lifetime_ms_min",
     "lifetime_ms_max",
     "fallback_bpm",
@@ -127,6 +128,8 @@ const LOG_PARAMS: &[&str] = &[
     "pitch_min",
     "pitch_max",
     "gain_decay_ratio",
+    "dry",
+    "wet",
     "random_walk_interval_ms",
     "peak_window_ms",
     "peak_update_ms",
@@ -134,6 +137,19 @@ const LOG_PARAMS: &[&str] = &[
 
 fn log_param(id: &str) -> bool {
     LOG_PARAMS.contains(&id)
+}
+
+/// Maps (min, max, value) to a slider domain. Log parameters work in
+/// ln(domain); zero-min ranges use a tiny epsilon floor so 0 stays reachable.
+fn slider_domain(id: &str, min: f32, max: f32, value: f32) -> (f32, f32, f32, bool) {
+    if log_param(id) {
+        let safe_min = if min > 0.0 { min } else { 1e-3 };
+        let safe_max = max.max(safe_min * 2.0);
+        let v = value.clamp(safe_min, safe_max);
+        (safe_min.ln(), safe_max.ln(), v.ln(), true)
+    } else {
+        (min, max, value.clamp(min, max), false)
+    }
 }
 
 /// Whether a parameter row shows based on mode / spawn-sync conditions.
@@ -355,6 +371,8 @@ pub struct ParticulaView {
     ring_phases: [f32; RINGS],
     /// Slow whole-pattern rotation (radians).
     bg_phase: f32,
+    /// Horizontal nudge of the sigil away from the visible panel (px).
+    centre_shift: f32,
     /// Shuffled dot-number order: lights follow a randomized sequence across
     /// all rings instead of lighting up ring-by-ring in fixed order.
     slot_order: Vec<usize>,
@@ -442,6 +460,7 @@ impl ParticulaView {
             next_dot: 0,
             ring_phases: [0.0; RINGS],
             bg_phase: 0.0,
+            centre_shift: 0.0,
             slot_order: shuffled_slots(),
             panel_left: PanelAnim::hidden(),
             panel_right: PanelAnim::hidden(),
@@ -532,6 +551,17 @@ impl ParticulaView {
         // About overlay fade.
         let goal = if self.about { 1.0 } else { 0.0 };
         self.about_fade += (goal - self.about_fade) * k;
+        // Sigil nudges smoothly away from the visible panel.
+        let shift_target = if self.panel_left.opacity > 0.05
+            && self.panel_left.opacity >= self.panel_right.opacity
+        {
+            110.0
+        } else if self.panel_right.opacity > 0.05 {
+            -110.0
+        } else {
+            0.0
+        };
+        self.centre_shift += (shift_target - self.centre_shift) * k;
     }
 
     fn live(&self) -> usize {
@@ -574,6 +604,7 @@ impl ParticulaView {
                 dots: self.dots,
                 phases: self.ring_phases,
                 bg_phase: self.bg_phase,
+                shift: self.centre_shift,
             })
             .width(Length::Fill)
             .height(Length::Fill),
@@ -694,11 +725,13 @@ impl ParticulaView {
             return iced::widget::space().into();
         };
         let map = self.param_map.clone();
-        slider(s.min..=s.max, s.value, move |v| {
-            map.set(id, v, std::sync::atomic::Ordering::Relaxed);
+        let (lo, hi, disp, log_scale) = slider_domain(id, s.min, s.max, s.value);
+        slider(lo..=hi, disp, move |v| {
+            let value = if log_scale { v.exp() } else { v };
+            map.set(id, value, std::sync::atomic::Ordering::Relaxed);
             ParticulaMessage::Tick
         })
-        .step(nice_step(s.min, s.max))
+        .step(nice_step(lo, hi))
         .width(Length::Fixed(90.0))
         .style(slider_style(1.0))
         .into()
@@ -866,13 +899,7 @@ impl ParticulaView {
         };
         // Logarithmic scale for time/freq/stretch/pitch params: the slider
         // works on ln(value), writes are un-logged back to the real value.
-        let log_scale = log_param(id) && snap.min > 0.0;
-        let (lo, hi, disp) = if log_scale {
-            let (lmin, lmax) = (snap.min.ln(), snap.max.ln());
-            (lmin, lmax, snap.value.max(snap.min).ln())
-        } else {
-            (snap.min, snap.max, snap.value)
-        };
+        let (lo, hi, disp, log_scale) = slider_domain(id, snap.min, snap.max, snap.value);
         container(
             row![
                 text(label(id))
@@ -1204,6 +1231,8 @@ struct SigilCanvas {
     phases: [f32; RINGS],
     /// Slow rotation shared by the whole background pattern (radians).
     bg_phase: f32,
+    /// Horizontal nudge applied to the pattern centre (px).
+    shift: f32,
 }
 
 impl<M> canvas::Program<M> for SigilCanvas {
@@ -1220,7 +1249,8 @@ impl<M> canvas::Program<M> for SigilCanvas {
         let mut frame = canvas::Frame::new(renderer, bounds.size());
         let w = bounds.width;
         let h = bounds.height;
-        let c = frame.center();
+        let centre = frame.center();
+        let c = iced::Point::new(centre.x + self.shift, centre.y);
         let max_r = w.min(h) * 0.5;
 
         use iced::widget::canvas::{Path, Stroke};
