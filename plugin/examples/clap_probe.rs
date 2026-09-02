@@ -71,9 +71,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut out_peak = 0.0_f32;
     let mut out_sq = 0.0_f64;
     let mut steady: u64 = 0;
-    let mut print_block = 0;
-
-    for _ in 0..BLOCKS {
+    for block in 0..BLOCKS {
         // Known input: DC 0.4 + soft 220 Hz wobble on both channels.
         for i in 0..FRAMES {
             let s = 0.4
@@ -86,7 +84,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let ins = input_ports.with_input_buffers(std::iter::once(AudioPortBuffer {
             latency: 0,
             channels: AudioPortBufferType::f32_input_only(
-                input.chunks_exact_mut(FRAMES).map(|c| InputChannel {
+                input.chunks_mut(FRAMES).map(|c| InputChannel {
                     buffer: &mut c[..FRAMES],
                     is_constant: true,
                 }),
@@ -95,7 +93,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let mut outs = output_ports.with_output_buffers(std::iter::once(AudioPortBuffer {
             latency: 0,
             channels: AudioPortBufferType::f32_output_only(
-                output.chunks_exact_mut(FRAMES).map(|c| &mut c[..FRAMES]),
+                output.chunks_mut(FRAMES).map(|c| &mut c[..FRAMES]),
             ),
         }));
 
@@ -113,10 +111,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             out_peak = out_peak.max(s.abs());
             out_sq += s as f64 * s as f64;
         }
-        if print_block == 0 || print_block == BLOCKS - 1 {
-            println!("block {print_block}: out[..4] = {:?}", &output[..4]);
+        if block == 0 || block == BLOCKS - 1 {
+            println!("block {block}: out[..4] = {:?}", &output[..4]);
         }
-        print_block += 1;
     }
 
     let out_rms = (out_sq / (BLOCKS * 2 * FRAMES) as f64).sqrt();

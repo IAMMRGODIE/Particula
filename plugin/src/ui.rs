@@ -9,8 +9,8 @@
 //!  - Clicking the left/right half of the sigil toggles a parameter panel that
 //!    fades in/out via a per-frame lerp.
 //!  - A header About overlay and a footer randomize button are plain state.
-//! All reads/writes go through the shared atomic ParamMap + a spawn-event
-//! channel — never shared mutable state with the audio thread.
+//!  - All reads/writes go through the shared atomic ParamMap + a spawn-event
+//!    channel — never shared mutable state with the audio thread.
 
 use std::{
     sync::{Arc, Mutex},
@@ -96,13 +96,7 @@ pub fn snapshot(id: &'static str, map: &ParamMap) -> Option<ParamSnapshot> {
     let value = match av.load(std::sync::atomic::Ordering::Relaxed) {
         SetValue::Float(v) => v,
         SetValue::Int(v) => v as f32,
-        SetValue::Bool(v) => {
-            if v {
-                1.0
-            } else {
-                0.0
-            }
-        }
+        SetValue::Bool(v) => v as u8 as f32,
         _ => 0.0,
     };
     Some(ParamSnapshot {
@@ -552,16 +546,18 @@ impl ParticulaView {
         let goal = if self.about { 1.0 } else { 0.0 };
         self.about_fade += (goal - self.about_fade) * k;
         // Sigil nudges smoothly away from the visible panel.
-        let shift_target = if self.panel_left.opacity > 0.05
-            && self.panel_left.opacity >= self.panel_right.opacity
-        {
+        // Target follows the panel *intent* (target flag), so the sigil starts
+        // returning the instant the panel closes; easing is faster than the
+        // fade so the pattern never lags behind.
+        let shift_target = if self.panel_left.target && self.panel_left.opacity > 0.004 {
             110.0
-        } else if self.panel_right.opacity > 0.05 {
+        } else if self.panel_right.target && self.panel_right.opacity > 0.004 {
             -110.0
         } else {
             0.0
         };
-        self.centre_shift += (shift_target - self.centre_shift) * k;
+        let kc = 1.0 - (-12.0 * dt).exp();
+        self.centre_shift += (shift_target - self.centre_shift) * kc;
     }
 
     fn live(&self) -> usize {
@@ -695,7 +691,7 @@ impl ParticulaView {
                 column![
                     text("PARTICULA").font(DISPLAY).size(30).color(fg),
                     text("a granular-cloud signal engine").font(MONO).size(10).color(dim),
-                    text("one shared history · feedback · texture · bpm · reverse")
+                    text(format!("by I Am Plugins · version {}", env!("CARGO_PKG_VERSION")))
                         .font(MONO)
                         .size(9)
                         .color(faint),
@@ -1086,7 +1082,6 @@ fn panel_style(
             color: border_color,
             width: border_width,
             radius: radius.into(),
-            ..Default::default()
         },
         ..container::Style::default()
     }
@@ -1106,7 +1101,6 @@ fn page_button_style(active: bool) -> impl Fn(&iced::Theme, button::Status) -> b
                 color: border,
                 width: 1.0,
                 radius: 0.0.into(),
-                ..Default::default()
             },
             ..Default::default()
         }
@@ -1169,7 +1163,6 @@ fn flat_button(_: &iced::Theme, status: button::Status) -> button::Style {
             color: border,
             width: 1.0,
             radius: 0.0.into(),
-            ..Default::default()
         },
         ..Default::default()
     }

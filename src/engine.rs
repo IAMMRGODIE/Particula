@@ -487,13 +487,11 @@ impl<const CHANNELS: usize> Effect<CHANNELS> for ParticulaEngine<CHANNELS> {
                     });
                 self.slots[idx] = Some(self.make_particle(sample_rate));
                 self.spawn_count += 1;
-                if let Some(tx) = &self.spawn_notifier {
-                    if let Some(p) = &self.slots[idx] {
-                        let _ = tx.send(SpawnEvent {
-                            lifetime_samples: p.lifetime(),
-                            live: self.live_count(),
-                        });
-                    }
+                if let (Some(tx), Some(p)) = (&self.spawn_notifier, &self.slots[idx]) {
+                    let _ = tx.send(SpawnEvent {
+                        lifetime_samples: p.lifetime(),
+                        live: self.live_count(),
+                    });
                 }
             }
         }
