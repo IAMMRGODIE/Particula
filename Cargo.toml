@@ -9,6 +9,7 @@ license = "MIT"
 crossbeam-channel = "0.5.16"
 i_am_dsp = { path = "../i_am_dsp/i_am_dsp", default-features = false }
 i_am_dsp_derive = { path = "../i_am_dsp/i_am_dsp_derive" }
+wide = "1.7.0"
 
 # Standalone workspace root (particula is intentionally NOT a member of the
 # i_am_dsp workspace — it is an independent project).

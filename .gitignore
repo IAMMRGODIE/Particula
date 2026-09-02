@@ -1,3 +1,6 @@
 /target
 *.wav
 *.log
+
+# Lockfile is copied from the i_am_dsp workspace (offline pin); not source.
+Cargo.lock

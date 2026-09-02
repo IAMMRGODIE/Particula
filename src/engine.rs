@@ -448,7 +448,7 @@ impl<const CHANNELS: usize> Effect<CHANNELS> for ParticulaEngine<CHANNELS> {
 
         // 2b. BPM sync accumulator + transport restart detection
         //     (Architecture.md sec.7).
-        let tempo = if infos.trustable && infos.playing {
+        let tempo = if infos.trustable {
             infos.tempo.filter(|t| *t > 0.0).unwrap_or(self.fallback_bpm)
         } else {
             self.fallback_bpm

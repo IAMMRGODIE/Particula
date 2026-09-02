@@ -4,12 +4,11 @@
 use i_am_dsp::{
     Effect, ProcessContext,
     effects::freq_shifter::IIRFreqShifter,
-    generators::wavetable::WaveTable,
     tools::ring_buffer::RingBuffer,
 };
 
 use crate::{
-    history::add_at,
+    history::{add_at, read_linear},
     position_mod::PositionMod,
     rng::SplitMix64,
     texture::Texture,
@@ -182,8 +181,8 @@ impl Particle {
         self.drift += self.playback_rate / history.capacity() as f32;
         self.position = (smoothed + self.drift).rem_euclid(1.0);
 
-        let mut s = history.sample(self.position, 0) * (1.0 - texture_blend)
-            + texture.sample(self.position) * texture_blend;
+        let mut s = read_linear(history, self.position) * (1.0 - texture_blend)
+            + texture.sample_linear(self.position) * texture_blend;
 
         // Envelope: linear attack, then exponential decay.
         if self.attack_elapsed < self.attack_samples {

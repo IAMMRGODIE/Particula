@@ -145,6 +145,36 @@ impl Texture {
         }
     }
 
+    /// Linear-interpolated read (used by the particle hot loop; avoids the
+    /// library's cubic `WaveTable::sample` per voice per sample).
+    pub fn sample_linear(&self, t: f32) -> f32 {
+        fn lerp_vec(v: &[f32], t: f32) -> f32 {
+            let n = v.len();
+            if n == 0 {
+                return 0.0;
+            }
+            if n == 1 {
+                return v[0];
+            }
+            let x = t.clamp(0.0, 1.0) * (n - 1) as f32;
+            let i0 = x.floor() as usize;
+            let i1 = (i0 + 1).min(n - 1);
+            let f = x - x.floor();
+            v[i0] + (v[i1] - v[i0]) * f
+        }
+        if self.stretched.is_empty() {
+            return 0.0;
+        }
+        let cur = lerp_vec(&self.stretched, t);
+        if let Some(prev) = &self.prev {
+            let progress = 1.0 - self.fade_remaining as f32 / self.fade_total as f32;
+            let a = lerp_vec(prev, t);
+            cur * progress + a * (1.0 - progress)
+        } else {
+            cur
+        }
+    }
+
     /// Read the texture at t in [0, 1) (crossfades during a refresh).
     /// Returns 0 while no texture has been stretched yet.
     pub fn sample(&self, t: f32) -> f32 {
