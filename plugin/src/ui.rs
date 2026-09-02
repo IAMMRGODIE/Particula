@@ -432,8 +432,11 @@ impl i_am_dsp_iced::SyncedView for ParticulaView {
             }
             ParticulaMessage::ParamReset { id } => {
                 if let Some((_, def)) = DEFAULTS.iter().find(|(p, _)| p == id) {
-                    set_param_as(&self.param_map, id, *def);
+                    // Ease toward the default through the same pending channel
+                    // as Randomize, so the value sweeps smoothly instead of
+                    // jumping. Dropping any earlier pending target for it.
                     self.randomize_pending.retain(|(pid, _)| pid != id);
+                    self.randomize_pending.push((id.to_string(), *def));
                 }
             }
         }
@@ -499,10 +502,10 @@ impl ParticulaView {
                 };
                 let next = cur + (target - cur) * 0.25;
                 if (target - next).abs() < (target - cur).abs() * 0.02 + 1e-4 {
-                    self.param_map.set(&id, target, std::sync::atomic::Ordering::Relaxed);
+                    set_param_as(&self.param_map, &id, target);
                     self.randomize_pending.remove(i);
                 } else {
-                    self.param_map.set(&id, next, std::sync::atomic::Ordering::Relaxed);
+                    set_param_as(&self.param_map, &id, next);
                     i += 1;
                 }
             }
