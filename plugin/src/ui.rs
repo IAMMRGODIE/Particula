@@ -437,8 +437,11 @@ impl i_am_dsp_iced::SyncedView for ParticulaView {
             }
             ParticulaMessage::Snap { id } => {
                 if let Some(v) = snap_pow2_target(&self.param_map, id) {
-                    set_param_as(&self.param_map, id, v);
+                    // Ease toward the snapped power of two through the same
+                    // pending channel as Randomize/Reset so the value glides
+                    // instead of jumping.
                     self.randomize_pending.retain(|(pid, _)| pid != id);
+                    self.randomize_pending.push((id.to_string(), v));
                 }
             }
             ParticulaMessage::Panic => {
