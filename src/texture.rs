@@ -60,6 +60,14 @@ impl Texture {
         self.window.capacity()
     }
 
+    /// Drops the stretched texture entirely (PANIC): reads return 0 until
+    /// the next refresh rebuilds it.
+    pub fn clear(&mut self) {
+        self.stretched.clear();
+        self.prev = None;
+        self.fade_remaining = 0;
+    }
+
     /// Number of WSOLA refreshes performed so far.
     pub fn refreshes(&self) -> usize {
         self.refreshes

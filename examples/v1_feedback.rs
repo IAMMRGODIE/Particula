@@ -82,7 +82,7 @@ fn main() -> std::io::Result<()> {
     engine.peak_update_ms = 25.0;
     engine.peak_threshold = 0.005;
     engine.feedback_gain = 0.55;
-    engine.feedback_delay_ms = 60.0;
+    engine.feedback_delay_value = 60.0;
     engine.feedback_damping_hz = 3500.0;
 
     let mut ctx: Box<dyn ProcessContext> = Box::new(());

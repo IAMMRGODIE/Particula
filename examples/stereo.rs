@@ -85,7 +85,7 @@ fn main() -> std::io::Result<()> {
     engine.peak_update_ms = 25.0;
     engine.peak_threshold = 0.004;
     engine.feedback_gain = 0.4;
-    engine.feedback_delay_ms = 25.0;
+    engine.feedback_delay_value = 25.0;
     engine.feedback_damping_hz = 2500.0;
     engine.texture_blend = 0.55;
     engine.texture_window_ms = 110.0;

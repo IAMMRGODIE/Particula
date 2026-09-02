@@ -1,6 +1,9 @@
 //! The particle cloud engine: shared history + particle pool + spawn rule.
 
-use std::f32::consts::PI;
+use std::{
+    f32::consts::PI,
+    sync::{Arc, atomic::{AtomicBool, Ordering}},
+};
 
 use crossbeam_channel::Sender;
 use i_am_dsp::{Effect, ProcessContext, tools::{bpm_syncer::BpmSyncer, ring_buffer::RingBuffer}};
@@ -151,8 +154,11 @@ pub struct ParticulaEngine<const CHANNELS: usize = 1> {
     // Feedback (v1).
     #[range(min = 0.0, max = 0.99)]
     pub feedback_gain: f32,
-    #[range(min = 0.0, max = 2000.0)]
-    pub feedback_delay_ms: f32,
+    /// Feedback injection distance from the freshest sample. Unit is
+    /// self-adapting: with `spawn_sync` (BPM grid) on it counts beats, otherwise
+    /// milliseconds — so feedback rides the transport tempo.
+    #[range(min = 0.125, max = 2000.0)]
+    pub feedback_delay_value: f32,
     #[range(min = 0.0, max = 20000.0)]
     pub feedback_damping_hz: f32,
 
@@ -190,6 +196,10 @@ pub struct ParticulaEngine<const CHANNELS: usize = 1> {
     slots: Vec<Option<Particle>>,
     #[skip]
     free: Vec<usize>,
+    /// PANIC latch: the GUI flips it, the audio thread consumes it once and
+    /// wipes the delay line + particle pool (see `clear_all`).
+    #[skip]
+    panic_flag: Arc<AtomicBool>,
     #[skip]
     spawner: Spawner,
     #[skip]
@@ -257,7 +267,7 @@ impl<const CHANNELS: usize> ParticulaEngine<CHANNELS> {
             peak_update_ms: 30.0,
             peak_threshold: 0.01,
             feedback_gain: 0.0,
-            feedback_delay_ms: 40.0,
+            feedback_delay_value: 40.0,
             feedback_damping_hz: 3000.0,
             texture_blend: 0.35,
             texture_window_ms: 85.0,
@@ -276,6 +286,7 @@ impl<const CHANNELS: usize> ParticulaEngine<CHANNELS> {
             ),
             slots: Vec::with_capacity(DEFAULT_POOL_CAPACITY),
             free: Vec::with_capacity(DEFAULT_POOL_CAPACITY),
+            panic_flag: Arc::new(AtomicBool::new(false)),
             spawner: Spawner::new(),
             rng: SplitMix64::new(seed),
             spawn_notifier: None,
@@ -290,6 +301,22 @@ impl<const CHANNELS: usize> ParticulaEngine<CHANNELS> {
     /// Reseeds the RNG (reproducible patches).
     pub fn set_seed(&mut self, seed: u64) {
         self.rng = SplitMix64::new(seed);
+    }
+
+    /// The PANIC latch: set it from any thread; the audio thread consumes it
+    /// once on the next process() call and clears history + particles.
+    pub fn panic_flag(&self) -> Arc<AtomicBool> {
+        self.panic_flag.clone()
+    }
+
+    /// Wipes the delay line and kills every particle (PANIC button).
+    fn clear_all(&mut self) {
+        self.history.underlying_buffer_mut().fill(0.0);
+        self.texture.clear();
+        for s in self.slots.iter_mut() {
+            *s = None;
+        }
+        self.free = (0..self.slots.len()).collect();
     }
 
     /// Attaches an optional spawn-event notifier. The engine posts one
@@ -434,7 +461,12 @@ impl<const CHANNELS: usize> Effect<CHANNELS> for ParticulaEngine<CHANNELS> {
         }
         let sample_rate = self.sample_rate;
 
-        // 0. Master bypass: straight passthrough, leave the buffer untouched.
+        // 0a. PANIC: consume the latch once per call and wipe history/particles.
+        if self.panic_flag.swap(false, Ordering::Relaxed) {
+            self.clear_all();
+        }
+
+        // 0b. Master bypass: straight passthrough, leave the buffer untouched.
         if !self.enabled {
             return;
         }
@@ -525,8 +557,14 @@ impl<const CHANNELS: usize> Effect<CHANNELS> for ParticulaEngine<CHANNELS> {
         //    particles see earlier ones' feedback this frame).
         let mut wet = [0.0_f32; CHANNELS];
         let dt = 1.0 / sample_rate as f32;
-        let feedback_delay = ((self.feedback_delay_ms * sample_rate as f32 / 1000.0) as usize)
-            .min(self.history.capacity());
+        // Feedback delay: beats (BPM grid on) or milliseconds (off).
+        let feedback_delay = if self.spawn_sync {
+            let beats = self.feedback_delay_value.max(0.0625);
+            ((beats * 60.0 / tempo.max(1.0)) * sample_rate as f32) as usize
+        } else {
+            (self.feedback_delay_value * sample_rate as f32 / 1000.0) as usize
+        }
+        .min(self.history.capacity());
         let fb_lp_a = if self.feedback_damping_hz <= 0.0 {
             1.0
         } else {

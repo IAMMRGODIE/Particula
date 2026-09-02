@@ -40,6 +40,8 @@ pub struct ParticulaProcessor {
     /// Receiving end of the spawn-event channel, handed to the GUI so it can
     /// light up sigil dots as particles are born.
     spawn_rx: Arc<Mutex<Receiver<SpawnEvent>>>,
+    /// PANIC latch shared with the GUI (see ParticulaView::Panic).
+    panic_flag: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl ParticulaProcessor {
@@ -53,10 +55,12 @@ impl ParticulaProcessor {
             0x5EED_FA11,
         );
         engine.set_spawn_notifier(tx);
+        let panic_flag = engine.panic_flag();
         Self {
             engine: Paramed::new(engine),
             stats: Arc::new([AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0)]),
             spawn_rx: Arc::new(Mutex::new(rx)),
+            panic_flag,
         }
     }
 
@@ -122,7 +126,12 @@ impl Processor for ParticulaProcessor {
     fn synced_view(&self) -> Self::SyncedView {
         // The view owns Arc handles into the shared state and reads/writes
         // them live on every frame; nothing here needs a snapshot.
-        ParticulaView::new(self.engine.param_map(), self.stats.clone(), self.spawn_rx.clone())
+        ParticulaView::new(
+            self.engine.param_map(),
+            self.stats.clone(),
+            self.spawn_rx.clone(),
+            self.panic_flag.clone(),
+        )
     }
 }
 

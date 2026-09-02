@@ -63,6 +63,8 @@ pub enum ParticulaMessage {
     PanelPage { side: usize, page: usize },
     ShowAbout(bool),
     Randomize,
+    /// PANIC: request the engine to wipe history + particles.
+    Panic,
     MasterEnabled(bool),
     Tick,
 }
@@ -194,7 +196,7 @@ pub fn label(id: &str) -> String {
         "freq_shift_min" => "Shift Min",
         "freq_shift_max" => "Shift Max",
         "feedback_gain" => "Feedback",
-        "feedback_delay_ms" => "FB Delay",
+        "feedback_delay_value" => "FB Delay",
         "feedback_damping_hz" => "FB Damp",
         "lifetime_ms_min" => "Life Min",
         "lifetime_ms_max" => "Life Max",
@@ -286,7 +288,7 @@ const RIGHT_PAGES: &[Pg] = &[
         "III · OUTPUT",
         &[
             ("feedback_gain", 0),
-            ("feedback_delay_ms", 0),
+            ("feedback_delay_value", 0),
             ("feedback_damping_hz", 0),
             ("pan_min", 0),
             ("pan_max", 0),
@@ -357,6 +359,8 @@ pub struct ParticulaView {
     pub stats: Arc<[std::sync::atomic::AtomicUsize; 3]>,
     /// Spawn events posted by the audio thread, drained on every tick.
     spawn_rx: Arc<Mutex<Receiver<SpawnEvent>>>,
+    /// PANIC latch (set by the button, consumed by the audio thread).
+    panic_flag: Arc<std::sync::atomic::AtomicBool>,
 
     /// Lit dots per ring (circular slot buffers).
     dots: [RingSlots; RINGS],
@@ -422,6 +426,10 @@ impl i_am_dsp_iced::SyncedView for ParticulaView {
             ParticulaMessage::Randomize => {
                 self.randomize_pending = random_targets(&self.param_map);
             }
+            ParticulaMessage::Panic => {
+                self.panic_flag
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+            }
             ParticulaMessage::MasterEnabled(v) => {
                 self.param_map.set("enabled", *v, std::sync::atomic::Ordering::Relaxed);
             }
@@ -452,11 +460,13 @@ impl ParticulaView {
         param_map: ParamMap,
         stats: Arc<[std::sync::atomic::AtomicUsize; 3]>,
         spawn_rx: Arc<Mutex<Receiver<SpawnEvent>>>,
+        panic_flag: Arc<std::sync::atomic::AtomicBool>,
     ) -> Self {
         Self {
             param_map,
             stats,
             spawn_rx,
+            panic_flag,
             dots: [[Dot {
                 age: 0.0,
                 lifetime: 0.0,
@@ -672,6 +682,9 @@ impl ParticulaView {
                     .size(9)
                     .color(TEXT_FAINT),
                 iced::widget::space().width(Length::Fill),
+                button(text("PANIC").font(MONO).size(9).color(Color::from_rgb(1.0, 0.45, 0.45)))
+                    .on_press(ParticulaMessage::Panic)
+                    .style(flat_button),
                 button(text("RANDOMIZE").font(MONO).size(9).color(TEXT_DIM))
                     .on_press(ParticulaMessage::Randomize)
                     .style(flat_button),
@@ -1028,7 +1041,7 @@ const DEFAULTS: &[(&str, f32)] = &[
     ("peak_update_ms", 30.0),
     ("peak_threshold", 0.01),
     ("feedback_gain", 0.0),
-    ("feedback_delay_ms", 40.0),
+    ("feedback_delay_value", 40.0),
     ("feedback_damping_hz", 3000.0),
     ("texture_blend", 0.35),
     ("texture_window_ms", 85.0),
