@@ -5,7 +5,7 @@ use i_am_dsp::{
     Effect, ProcessContext,
     effects::freq_shifter::IIRFreqShifter,
     generators::wavetable::WaveTable,
-    tools::{ring_buffer::RingBuffer, smoother::DoubleTimeConstant},
+    tools::ring_buffer::RingBuffer,
 };
 
 use crate::{
@@ -47,8 +47,11 @@ pub struct Particle {
     onset: f32,
     /// Accumulated pitch drift in t-space.
     drift: f32,
-    /// Follower toward the modulated onset.
-    smoother: DoubleTimeConstant<1>,
+    /// Smoothed position follower (single-pole IIR). Precomputed coefficient
+    /// \`smooth_a\` replaces the per-sample exp() calls of the library smoother
+    /// (a major hot spot at high particle counts).
+    smoothed: f32,
+    smooth_a: f32,
     /// Position modulation source.
     position_mod: PositionMod,
     /// Granular playback rate (1.0 = original speed). A *negative* rate
@@ -95,13 +98,17 @@ impl Particle {
     ) -> Self {
         let lifetime_samples = lifetime_samples.max(1);
         let attack_samples = attack_samples.min(lifetime_samples);
+        // One-pole coefficient for position smoothing (attack == release time).
+        let smooth_tc = (smooth_ms.max(0.1) * sample_rate as f32 / 1000.0).max(1.0);
+        let smooth_a = 1.0 - (-1.0 / smooth_tc).exp();
         // Exponential fade to -60 dB at the end of the lifetime.
         let decay_per_sample = 1e-3f32.powf(1.0 / lifetime_samples as f32);
         Self {
             position: initial_position,
             onset: initial_position,
             drift: 0.0,
-            smoother: DoubleTimeConstant::new(smooth_ms, smooth_ms, initial_position, sample_rate),
+            smoothed: initial_position,
+            smooth_a,
             position_mod,
             playback_rate,
             freq_shifter: IIRFreqShifter::new(sample_rate, freq_shift),
@@ -168,8 +175,8 @@ impl Particle {
             self.onset
         };
         let target = (base + offset).clamp(0.0, 1.0);
-        self.smoother.input_value(&[target]);
-        let smoothed = self.smoother.get_smoothed_result()[0];
+        self.smoothed += self.smooth_a * (target - self.smoothed);
+        let smoothed = self.smoothed;
 
         // Pitch drift on top; read position stays in [0, 1).
         self.drift += self.playback_rate / history.capacity() as f32;

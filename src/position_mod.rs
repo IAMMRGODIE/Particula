@@ -3,7 +3,27 @@
 //! All sources produce a *t-space offset* around the particle's fixed onset.
 //! The engine smooths the resulting target so abrupt mod changes never click.
 
+use std::sync::OnceLock;
+
 use crate::rng::SplitMix64;
+
+/// Cheap sine approximation via a 4096-entry lookup table with linear
+/// interpolation. The engine calls this per particle per sample, so the
+/// libm sin() cost at 256+ particles / 48 kHz is measurable.
+fn sin_approx(phase: f32) -> f32 {
+    static TABLE: OnceLock<[f32; 4096]> = OnceLock::new();
+    let t = TABLE.get_or_init(|| {
+        core::array::from_fn(|i| {
+            let a = (i as f32 / 4096.0) * std::f32::consts::TAU;
+            a.sin()
+        })
+    });
+    let x = phase * (4096.0 / std::f32::consts::TAU);
+    let i0 = (x.floor() as i64).rem_euclid(4096) as usize;
+    let i1 = (i0 + 1) & 4095;
+    let frac = x - x.floor();
+    t[i0] + (t[i1] - t[i0]) * frac
+}
 
 /// Position modulation source owned by one particle.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -70,7 +90,7 @@ impl PositionMod {
             Self::Fixed | Self::PeakFollow => 0.0,
             Self::Lfo { depth, rate_hz, phase } => {
                 *phase += *rate_hz * std::f32::consts::TAU * dt;
-                *depth * phase.sin()
+                *depth * sin_approx(*phase)
             }
             Self::RandomWalk {
                 depth,
