@@ -589,9 +589,11 @@ impl ParticulaView {
                     .width(Length::Shrink),
                 text("P A R T I C U L A").font(DISPLAY).size(15).color(TEXT),
                 iced::widget::space().width(Length::Fill),
-                text("WET").font(MONO).size(8).color(TEXT_FAINT),
+                iced::widget::mouse_area(text("WET").font(MONO).size(8).color(TEXT_FAINT))
+                    .on_double_click(ParticulaMessage::ParamReset { id: "wet" }),
                 self.mini_slider("wet"),
-                text("DRY").font(MONO).size(8).color(TEXT_FAINT),
+                iced::widget::mouse_area(text("DRY").font(MONO).size(8).color(TEXT_FAINT))
+                    .on_double_click(ParticulaMessage::ParamReset { id: "dry" }),
                 self.mini_slider("dry"),
                 self.enabled_button(),
             ]
@@ -730,17 +732,14 @@ impl ParticulaView {
         };
         let map = self.param_map.clone();
         let (lo, hi, disp, log_scale) = slider_domain(id, s.min, s.max, s.value);
-        iced::widget::mouse_area(
-            slider(lo..=hi, disp, move |v| {
-                let value = if log_scale { v.exp() } else { v };
-                map.set(id, value, std::sync::atomic::Ordering::Relaxed);
-                ParticulaMessage::Tick
-            })
-            .step(nice_step(lo, hi))
-            .width(Length::Fixed(90.0))
-            .style(slider_style(1.0)),
-        )
-        .on_double_click(ParticulaMessage::ParamReset { id })
+        slider(lo..=hi, disp, move |v| {
+            let value = if log_scale { v.exp() } else { v };
+            map.set(id, value, std::sync::atomic::Ordering::Relaxed);
+            ParticulaMessage::Tick
+        })
+        .step(nice_step(lo, hi))
+        .width(Length::Fixed(90.0))
+        .style(slider_style(1.0))
         .into()
     }
 
@@ -909,20 +908,20 @@ impl ParticulaView {
         let (lo, hi, disp, log_scale) = slider_domain(id, snap.min, snap.max, snap.value);
         container(
             row![
-                text(label(id))
-                    .font(MONO)
-                    .size(9)
-                    .color(Color::from_rgba(0.60, 0.60, 0.60, a))
-                    .width(Length::Fixed(76.0)),
                 iced::widget::mouse_area(
-                    slider(lo..=hi, disp, move |v| {
-                        let value = if log_scale { v.exp() } else { v };
-                        ParticulaMessage::Param { id, value }
-                    })
-                    .step(nice_step(lo, hi))
-                    .style(slider_style(a)),
+                    text(label(id))
+                        .font(MONO)
+                        .size(9)
+                        .color(Color::from_rgba(0.60, 0.60, 0.60, a))
+                        .width(Length::Fixed(76.0)),
                 )
                 .on_double_click(ParticulaMessage::ParamReset { id }),
+                slider(lo..=hi, disp, move |v| {
+                    let value = if log_scale { v.exp() } else { v };
+                    ParticulaMessage::Param { id, value }
+                })
+                .step(nice_step(lo, hi))
+                .style(slider_style(a)),
                 text(format!("{:.2}", snap.value))
                     .font(MONO)
                     .size(9)
@@ -972,11 +971,14 @@ impl ParticulaView {
         }
         container(
             row![
-                text(label(id))
-                    .font(MONO)
-                    .size(9)
-                    .color(Color::from_rgba(0.60, 0.60, 0.60, a))
-                    .width(Length::Fixed(76.0)),
+                iced::widget::mouse_area(
+                    text(label(id))
+                        .font(MONO)
+                        .size(9)
+                        .color(Color::from_rgba(0.60, 0.60, 0.60, a))
+                        .width(Length::Fixed(76.0)),
+                )
+                .on_double_click(ParticulaMessage::ParamReset { id }),
                 row(buttons).spacing(4).width(Length::Fill),
             ]
             .align_y(iced::Alignment::Center)
@@ -993,7 +995,7 @@ impl ParticulaView {
 /// (AtomicValue carries no default, so the GUI keeps its own copy.)
 const DEFAULTS: &[(&str, f32)] = &[
     ("dry", 1.0),
-    ("wet", 0.85),
+    ("wet", 1.0),
     ("enabled", 1.0),
     ("spawn_interval_ms", 30.0),
     ("spawn_sync", 0.0),
