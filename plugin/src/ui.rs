@@ -991,7 +991,7 @@ impl ParticulaView {
 // -------------------------------- randomize ---------------------------------
 /// Factory defaults, mirroring the engine's initial parameter values.
 /// (AtomicValue carries no default, so the GUI keeps its own copy.)
-const DEFAULTS: &[(&'static str, f32)] = &[
+const DEFAULTS: &[(&str, f32)] = &[
     ("dry", 1.0),
     ("wet", 0.85),
     ("enabled", 1.0),
