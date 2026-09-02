@@ -16,7 +16,7 @@ use crate::{
 };
 
 /// Fixed pool capacity of the slot map (Architecture.md sec.10: 64~256).
-pub const DEFAULT_POOL_CAPACITY: usize = 256;
+pub const DEFAULT_POOL_CAPACITY: usize = 192;
 
 /// Equal-power pan gains across the channel count.
 ///
@@ -73,7 +73,7 @@ pub struct ParticulaEngine<const CHANNELS: usize = 1> {
 
     #[range(min = 1.0, max = 5000.0)]
     pub spawn_interval_ms: f32,
-    #[range(min = 1.0, max = 256.0)]
+    #[range(min = 1.0, max = 192.0)]
     pub max_particles: f32,
 
     // Spawn timing sync (v2 BPM sync, Architecture.md sec.7).

@@ -123,7 +123,6 @@ const LOG_PARAMS: &[&str] = &[
     "texture_stretch",
     "pitch_min",
     "pitch_max",
-    "gain_decay_ratio",
     "dry",
     "wet",
     "random_walk_interval_ms",
