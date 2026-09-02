@@ -556,7 +556,7 @@ impl ParticulaView {
         } else {
             0.0
         };
-        let kc = 1.0 - (-12.0 * dt).exp();
+        let kc = 1.0 - (-6.0 * dt).exp();
         self.centre_shift += (shift_target - self.centre_shift) * kc;
     }
 
