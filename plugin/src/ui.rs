@@ -164,6 +164,7 @@ fn cond_matches(cond: u8, mode: usize, sync_on: bool) -> bool {
 fn discrete_options(id: &str) -> &'static [&'static str] {
     match id {
         "position_mode" => &["Fixed", "LFO", "Walk", "Peak"],
+        "lfo_wave" => &["Sine", "Tri", "Saw", "Sqr"],
         _ => &["0", "1", "2", "3", "4", "5", "6", "7"],
     }
 }
@@ -183,7 +184,9 @@ pub fn label(id: &str) -> String {
         "peak_threshold" => "Peak Thr",
         "spawn_interval_beats" => "Beats",
         "fallback_bpm" => "Fallback",
+        "lfo_wave" => "Wave",
         "lfo_rate_hz" => "LFO Rate",
+        "lfo_rate_beats" => "LFO Beats",
         "lfo_depth" => "LFO Depth",
         "position_smooth_ms" => "Smooth",
         "texture_blend" => "Texture",
@@ -196,7 +199,8 @@ pub fn label(id: &str) -> String {
         "freq_shift_min" => "Shift Min",
         "freq_shift_max" => "Shift Max",
         "feedback_gain" => "Feedback",
-        "feedback_delay_value" => "FB Delay",
+        "feedback_delay_ms" => "FB Delay",
+        "feedback_delay_beats" => "FB Beats",
         "feedback_damping_hz" => "FB Damp",
         "lifetime_ms_min" => "Life Min",
         "lifetime_ms_max" => "Life Max",
@@ -263,8 +267,10 @@ const RIGHT_PAGES: &[Pg] = &[
         &[
             ("position_mode", 0),
             ("position_smooth_ms", 0),
-            ("lfo_rate_hz", 2),
-            ("lfo_depth", 2),
+            ("lfo_wave", 0),
+            ("lfo_rate_hz", 6),
+            ("lfo_rate_beats", 5),
+            ("lfo_depth", 0),
             ("random_walk_step", 3),
             ("random_walk_interval_ms", 3),
             ("peak_window_ms", 4),
@@ -288,7 +294,8 @@ const RIGHT_PAGES: &[Pg] = &[
         "III · OUTPUT",
         &[
             ("feedback_gain", 0),
-            ("feedback_delay_value", 0),
+            ("feedback_delay_ms", 6),
+            ("feedback_delay_beats", 5),
             ("feedback_damping_hz", 0),
             ("pan_min", 0),
             ("pan_max", 0),
@@ -682,7 +689,7 @@ impl ParticulaView {
                     .size(9)
                     .color(TEXT_FAINT),
                 iced::widget::space().width(Length::Fill),
-                button(text("PANIC").font(MONO).size(9).color(Color::from_rgb(1.0, 0.45, 0.45)))
+                button(text("PANIC").font(MONO).size(9).color(TEXT_DIM))
                     .on_press(ParticulaMessage::Panic)
                     .style(flat_button),
                 button(text("RANDOMIZE").font(MONO).size(9).color(TEXT_DIM))
@@ -1033,6 +1040,8 @@ const DEFAULTS: &[(&str, f32)] = &[
     ("freq_shift_max", 120.0),
     ("position_smooth_ms", 20.0),
     ("position_mode", 1.0),
+    ("lfo_wave", 0.0),
+    ("lfo_rate_beats", 1.0),
     ("lfo_rate_hz", 0.15),
     ("lfo_depth", 0.15),
     ("random_walk_step", 0.02),
@@ -1041,7 +1050,8 @@ const DEFAULTS: &[(&str, f32)] = &[
     ("peak_update_ms", 30.0),
     ("peak_threshold", 0.01),
     ("feedback_gain", 0.0),
-    ("feedback_delay_value", 40.0),
+    ("feedback_delay_ms", 40.0),
+    ("feedback_delay_beats", 1.0),
     ("feedback_damping_hz", 3000.0),
     ("texture_blend", 0.35),
     ("texture_window_ms", 85.0),

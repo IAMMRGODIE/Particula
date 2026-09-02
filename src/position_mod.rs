@@ -25,13 +25,38 @@ fn sin_approx(phase: f32) -> f32 {
     t[i0] + (t[i1] - t[i0]) * frac
 }
 
+/// LFO waveform shapes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LfoWave {
+    Sine,
+    Triangle,
+    Saw,
+    Square,
+}
+
+impl From<i32> for LfoWave {
+    fn from(i: i32) -> Self {
+        match i.clamp(0, 3) {
+            0 => Self::Sine,
+            1 => Self::Triangle,
+            2 => Self::Saw,
+            _ => Self::Square,
+        }
+    }
+}
+
 /// Position modulation source owned by one particle.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PositionMod {
     /// Keep reading at the spawn onset.
     Fixed,
-    /// Slow sine wobble around the onset.
-    Lfo { depth: f32, rate_hz: f32, phase: f32 },
+    /// Wobble around the onset with a shaped oscillator.
+    Lfo {
+        depth: f32,
+        rate_hz: f32,
+        phase: f32,
+        wave: LfoWave,
+    },
     /// Bounded random walk around the onset, stepped at fixed intervals.
     RandomWalk {
         depth: f32,
@@ -53,12 +78,13 @@ impl PositionMod {
         Self::Fixed
     }
 
-    /// Sine LFO with a random initial phase.
-    pub fn lfo(rate_hz: f32, depth: f32, rng: &mut SplitMix64) -> Self {
+    /// LFO with the given waveform and a random initial phase.
+    pub fn lfo(wave: LfoWave, rate_hz: f32, depth: f32, rng: &mut SplitMix64) -> Self {
         Self::Lfo {
             depth: depth.clamp(0.0, 1.0),
             rate_hz: rate_hz.abs(),
             phase: rng.range(0.0, std::f32::consts::TAU),
+            wave,
         }
     }
 
@@ -88,9 +114,27 @@ impl PositionMod {
     pub fn next_offset(&mut self, dt: f32, sample_count: usize, rng: &mut SplitMix64) -> f32 {
         match self {
             Self::Fixed | Self::PeakFollow => 0.0,
-            Self::Lfo { depth, rate_hz, phase } => {
+            Self::Lfo {
+                depth,
+                rate_hz,
+                phase,
+                wave,
+            } => {
                 *phase += *rate_hz * std::f32::consts::TAU * dt;
-                *depth * sin_approx(*phase)
+                let t = (*phase / std::f32::consts::TAU).fract();
+                let v = match wave {
+                    LfoWave::Sine => sin_approx(*phase),
+                    LfoWave::Triangle => 4.0 * (t - 0.5).abs() - 1.0,
+                    LfoWave::Saw => t * 2.0 - 1.0,
+                    LfoWave::Square => {
+                        if sin_approx(*phase) >= 0.0 {
+                            1.0
+                        } else {
+                            -1.0
+                        }
+                    }
+                };
+                *depth * v
             }
             Self::RandomWalk {
                 depth,

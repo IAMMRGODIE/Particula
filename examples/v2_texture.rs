@@ -81,7 +81,7 @@ fn main() -> std::io::Result<()> {
     engine.peak_update_ms = 25.0;
     engine.peak_threshold = 0.005;
     engine.feedback_gain = 0.45;
-    engine.feedback_delay_value = 18.0;
+    engine.feedback_delay_ms = 18.0;
     engine.feedback_damping_hz = 2500.0;
 
     // v2: BPM sync (offline -> fallback_bpm path) + WSOLA texture layer.

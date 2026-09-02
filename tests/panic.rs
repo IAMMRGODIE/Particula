@@ -21,7 +21,7 @@ fn run(engine: &mut ParticulaEngine, n: usize, input: f32) -> Vec<f32> {
 fn panic_clears_history_and_particles() {
     let mut e = ParticulaEngine::<1>::new(1 << 14, SR, 0xF00D);
     e.feedback_gain = 0.9; // strong feedback so residue would ring on
-    e.feedback_delay_value = 20.0;
+    e.feedback_delay_ms = 20.0;
     e.spawn_interval_ms = 2.0;
     // 0.5s of input builds up particles + feedback energy.
     let out = run(&mut e, SR / 2, 0.7);

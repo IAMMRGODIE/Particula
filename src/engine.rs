@@ -12,7 +12,7 @@ use i_am_dsp_derive::Parameters;
 use crate::{
     history::recent_peak_position,
     particle::Particle,
-    position_mod::PositionMod,
+    position_mod::{LfoWave, PositionMod},
     rng::SplitMix64,
     spawner::{SpawnEvent, Spawner},
     texture::Texture,
@@ -136,6 +136,12 @@ pub struct ParticulaEngine<const CHANNELS: usize = 1> {
     // 3 = peak follow).
     #[range(min = 0, max = 3)]
     pub position_mode: i32,
+    /// LFO waveform: 0 Sine, 1 Triangle, 2 Saw, 3 Square.
+    #[range(min = 0, max = 3)]
+    pub lfo_wave: i32,
+    /// LFO rate in beats (used when the BPM-grid sync is on).
+    #[range(min = 0.03125, max = 8.0)]
+    pub lfo_rate_beats: f32,
     #[range(min = 0.01, max = 50.0)]
     pub lfo_rate_hz: f32,
     #[range(min = 0.0, max = 0.5)]
@@ -154,11 +160,14 @@ pub struct ParticulaEngine<const CHANNELS: usize = 1> {
     // Feedback (v1).
     #[range(min = 0.0, max = 0.99)]
     pub feedback_gain: f32,
-    /// Feedback injection distance from the freshest sample. Unit is
-    /// self-adapting: with `spawn_sync` (BPM grid) on it counts beats, otherwise
-    /// milliseconds — so feedback rides the transport tempo.
-    #[range(min = 0.125, max = 2000.0)]
-    pub feedback_delay_value: f32,
+    /// Feedback injection distance from the freshest sample, in milliseconds
+    /// (used when the BPM-grid sync is off).
+    #[range(min = 0.0, max = 2000.0)]
+    pub feedback_delay_ms: f32,
+    /// Same distance in beats, used when `spawn_sync` (BPM grid) is on so the
+    /// feedback rides the transport tempo.
+    #[range(min = 0.03125, max = 16.0)]
+    pub feedback_delay_beats: f32,
     #[range(min = 0.0, max = 20000.0)]
     pub feedback_damping_hz: f32,
 
@@ -259,6 +268,8 @@ impl<const CHANNELS: usize> ParticulaEngine<CHANNELS> {
             reverse_chance: 0.0,
             position_smooth_ms: 20.0,
             position_mode: 1,
+            lfo_wave: 0,
+            lfo_rate_beats: 1.0,
             lfo_rate_hz: 0.15,
             lfo_depth: 0.15,
             random_walk_step: 0.02,
@@ -267,7 +278,8 @@ impl<const CHANNELS: usize> ParticulaEngine<CHANNELS> {
             peak_update_ms: 30.0,
             peak_threshold: 0.01,
             feedback_gain: 0.0,
-            feedback_delay_value: 40.0,
+            feedback_delay_ms: 40.0,
+            feedback_delay_beats: 1.0,
             feedback_damping_hz: 3000.0,
             texture_blend: 0.35,
             texture_window_ms: 85.0,
@@ -379,7 +391,7 @@ impl<const CHANNELS: usize> ParticulaEngine<CHANNELS> {
     }
 
     /// Builds one particle from the current parameters (spawn rule + shape).
-    fn make_particle(&mut self, sample_rate: usize) -> Particle {
+    fn make_particle(&mut self, sample_rate: usize, tempo: f32) -> Particle {
         let n = self.spawner.sequence_index();
         let position = (self.spawn_rule_position(n)
             + self.position_jitter * self.rng.sym())
@@ -404,7 +416,20 @@ impl<const CHANNELS: usize> ParticulaEngine<CHANNELS> {
         let attack = ((self.attack_ms * sample_rate as f32 / 1000.0).max(1.0)) as usize;
         let mode = match self.position_mode {
             0 => PositionMod::fixed(),
-            1 => PositionMod::lfo(self.lfo_rate_hz, self.lfo_depth, &mut self.rng),
+            1 => {
+                let rate_hz = if self.spawn_sync {
+                    (self.lfo_rate_beats.max(0.015625) * tempo.max(1.0) / 60.0)
+                        .max(0.0001)
+                } else {
+                    self.lfo_rate_hz
+                };
+                PositionMod::lfo(
+                    LfoWave::from(self.lfo_wave),
+                    rate_hz,
+                    self.lfo_depth,
+                    &mut self.rng,
+                )
+            }
             2 => PositionMod::random_walk(
                 self.random_walk_step,
                 self.lfo_depth,
@@ -517,7 +542,7 @@ impl<const CHANNELS: usize> Effect<CHANNELS> for ParticulaEngine<CHANNELS> {
                         self.slots.push(None);
                         self.slots.len() - 1
                     });
-                self.slots[idx] = Some(self.make_particle(sample_rate));
+                self.slots[idx] = Some(self.make_particle(sample_rate, tempo));
                 self.spawn_count += 1;
                 if let (Some(tx), Some(p)) = (&self.spawn_notifier, &self.slots[idx]) {
                     let _ = tx.send(SpawnEvent {
@@ -559,10 +584,10 @@ impl<const CHANNELS: usize> Effect<CHANNELS> for ParticulaEngine<CHANNELS> {
         let dt = 1.0 / sample_rate as f32;
         // Feedback delay: beats (BPM grid on) or milliseconds (off).
         let feedback_delay = if self.spawn_sync {
-            let beats = self.feedback_delay_value.max(0.0625);
-            ((beats * 60.0 / tempo.max(1.0)) * sample_rate as f32) as usize
+            ((self.feedback_delay_beats.max(0.03125) * 60.0 / tempo.max(1.0))
+                * sample_rate as f32) as usize
         } else {
-            (self.feedback_delay_value * sample_rate as f32 / 1000.0) as usize
+            (self.feedback_delay_ms * sample_rate as f32 / 1000.0) as usize
         }
         .min(self.history.capacity());
         let fb_lp_a = if self.feedback_damping_hz <= 0.0 {

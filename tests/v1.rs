@@ -98,7 +98,7 @@ fn feedback_changes_output_and_stays_bounded() {
     on.feedback_gain = 0.7;
     // Keep the injection point inside the particles' read region
     // (base 0.9 ± jitter): delay 8 ms -> h = 4095 - 384 = 3711, well inside.
-    on.feedback_delay_value = 8.0;
+    on.feedback_delay_ms = 8.0;
     on.feedback_damping_hz = 4000.0;
     on.base_position = 0.9;
     on.position_jitter = 0.08;
@@ -127,7 +127,7 @@ fn no_self_oscillation_on_silence() {
     e.wet = 1.0;
     e.texture_blend = 0.0; // isolate the feedback path
     e.feedback_gain = 0.9;
-    e.feedback_delay_value = 20.0;
+    e.feedback_delay_ms = 20.0;
     e.feedback_damping_hz = 2000.0;
     e.position_mode = 1;
     e.base_position = 0.99;

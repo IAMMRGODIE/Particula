@@ -134,7 +134,7 @@ fn texture_with_feedback_stays_bounded() {
     e.texture_blend = 0.6;
     e.texture_stretch = 0.8;
     e.feedback_gain = 0.5;
-    e.feedback_delay_value = 12.0;
+    e.feedback_delay_ms = 12.0;
     e.feedback_damping_hz = 3000.0;
     e.base_position = 0.9;
     e.position_jitter = 0.07;
