@@ -1306,15 +1306,18 @@ fn random_targets(map: &ParamMap) -> Vec<(String, f32)> {
         let value = match &*av {
             AtomicValue::Float { range, .. } => {
                 let (lo, hi) = (*range.start(), *range.end());
-                let (_, _, _, scale) = slider_domain(&id, lo, hi, lo);
-                match scale {
-                    DomainScale::Log => lo * (hi / lo).powf(rng.next_f32()),
-                    DomainScale::Tanh { scale: s } => {
-                        let a = (lo / s).tanh();
-                        let b = (hi / s).tanh();
-                        (s * (a + (b - a) * rng.next_f32()).atanh()).clamp(-s, s)
-                    }
-                    DomainScale::Linear => rng.range(lo, hi),
+                // Sample uniformly over the slider *display* domain and map
+                // back through the same transform as the sliders — this keeps
+                // Log parameters within the epsilon floor (zero-min items like
+                // FB delay / FB damping never hit lo = 0 → no 0 * log(hi/0)
+                // NaN) and Tanh within (-1, 1) so atanh is always safe.
+                let (a, b, _, scale) = slider_domain(&id, lo, hi, lo);
+                let u = a + (b - a) * rng.next_f32();
+                let v = domain_to_value(scale, u);
+                if v.is_finite() {
+                    v
+                } else {
+                    continue; // defensive: never feed the engine a NaN target
                 }
             }
             AtomicValue::Int { range, .. } => {
