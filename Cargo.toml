@@ -3,7 +3,7 @@ name = "particula"
 version = "0.1.0"
 edition = "2024"
 description = "Experimental sound-design particle effecter (granular cloud engine)"
-license = "MIT"
+license = "MPL-2.0"
 
 [dependencies]
 crossbeam-channel = "0.5.16"

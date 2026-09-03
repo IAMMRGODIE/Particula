@@ -37,9 +37,9 @@
 ### 构建 CLAP
 
 ```bash
-cargo build --release -p particula_plugin --offline
+cargo build --release -p particula_plugin
 # 产出 .clap（dll 改成 CLAP 扩展名）
-cp target/release/particula_plugin.dll target/release/ParticulaCloud.clap
+cp target/release/particula_plugin.dll target/release/Particula.clap
 # 把 ParticulaCloud.clap 放进 DAW 的 CLAP 插件目录即可
 ```
 
@@ -109,4 +109,4 @@ IIR 频移载波旋转递推（替代逐样本 cos/sin）—— 384 满载约 0.
 
 ## 许可证
 
-MIT（见 Cargo.toml 的 license 字段）。Crimson Text 衬线字体为 OFL 开源许可，随包分发。
+MPL-2.0（见 Cargo.toml 的 license 字段；副本可在 https://mozilla.org/MPL/2.0/ 获取）。Crimson Text 衬线字体为 OFL 开源许可，随包分发。
