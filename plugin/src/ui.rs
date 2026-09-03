@@ -515,7 +515,7 @@ impl i_am_dsp_iced::SyncedView for ParticulaView {
                 let pool = snapshot("max_particles", &self.param_map)
                     .map(|s| s.value)
                     .unwrap_or(64.0);
-                let n = ((pool / 16.0).floor() as usize).max(1);
+                let n = ((pool / 16.0).floor().max(1.0)) as usize;
                 self.shoot.store(n, std::sync::atomic::Ordering::Relaxed);
             }
             ParticulaMessage::MasterEnabled(v) => {
