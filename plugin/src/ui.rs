@@ -581,9 +581,9 @@ impl ParticulaView {
     }
 
     /// PANIC: re-anchor every lit dot so it finishes its remaining life as a
-    /// smooth 0.35s fade-out *in its own data* (no global brightness hack):
-    /// find x with 0.35/(x + 0.35) == current_alpha, then age = x,
-    /// lifetime = x + 0.35. Dots that are already invisible die instantly;
+    /// smooth 0.15s fade-out *in its own data* (no global brightness hack):
+    /// find x with 0.15/(x + 0.15) == current_alpha, then age = x,
+    /// lifetime = x + 0.15. Dots that are already invisible die instantly;
     /// new spawn events later replace the slots and light up normally.
     fn panic_fade_dots(&mut self) {
         for ring in self.dots.iter_mut() {
@@ -593,9 +593,9 @@ impl ParticulaView {
                     d.lifetime = 0.0;
                     d.age = 0.0;
                 } else {
-                    let x = 0.35 * (1.0 / a - 1.0);
+                    let x = 0.15 * (1.0 / a - 1.0);
                     d.age = x;
-                    d.lifetime = x + 0.35;
+                    d.lifetime = x + 0.15;
                 }
             }
         }

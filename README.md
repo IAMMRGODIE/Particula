@@ -20,6 +20,8 @@
 
 右下角 RANDOMIZE 点一下就会随机所有参数，SHOOT 会立即发射 `(pool / 16.0).floor().max(1)` 个粒子，如果当前 Pool 是满的是没效果的. PANIC 会立即停止一切粒子. 
 
+另外 Pool 不建议开太大，因为卡（
+
 ## 安装
 
 编译好的应该在 Release 里面有，把它放到 C:\Program Files\Common Files\CLAP 然后打开你的 daw 扫一扫就能看到了.
