@@ -1043,6 +1043,7 @@ const SNAP_POW2: &[&str] = &[
     "spawn_interval_beats",
     "feedback_delay_beats",
     "lfo_rate_beats",
+    "history_len_beats",
     "pitch_min",
     "pitch_max",
     "texture_stretch",
