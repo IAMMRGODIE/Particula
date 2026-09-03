@@ -616,9 +616,18 @@ impl<const CHANNELS: usize> Effect<CHANNELS> for ParticulaEngine<CHANNELS> {
             self.bpm.read()
         };
         let spawn_due = if self.spawn_sync {
+            let interval = self.spawn_interval_beats.max(0.03125);
             let due = beat_now >= self.next_spawn_beat;
             if due {
-                self.next_spawn_beat += self.spawn_interval_beats.max(0.03125);
+                // current_beat_number can jump in from mid-song (transport
+                // playhead), so never chase it beat-by-beat from 0 — realign
+                // to the next grid point after the playhead instead.
+                if beat_now > self.next_spawn_beat + interval * 2.0 {
+                    self.next_spawn_beat =
+                        (beat_now / interval).floor() * interval + interval;
+                } else {
+                    self.next_spawn_beat += interval;
+                }
             }
             due
         } else {

@@ -157,9 +157,10 @@ fn beat_sync_mode_spawns_continuously_on_the_grid() {
 
 #[test]
 fn host_beat_number_drives_the_grid() {
-    // Static host beat position: 12.4 (bar 3 + 0.4 into the bar at 4/4).
-    // The engine must use it (not the internal counter) and fire spawns on
-    // the 0.25-beat grid until the target passes 12.4.
+    // Static host beat position: 12.4 = the user pressed play mid-song
+    // (beat 12.4, not 0). The engine must use the host position directly and
+    // NOT chase it beat-by-beat from 0: one spawn at the playhead, then a
+    // realign to the next grid point (12.5) and silence — no spawn burst.
     let mut e = ParticulaEngine::<1>::new(4096, SR, 44);
     e.spawn_sync = true;
     e.spawn_interval_beats = 0.25;
@@ -167,8 +168,11 @@ fn host_beat_number_drives_the_grid() {
     e.texture_blend = 0.0;
     let mut ctx: Box<dyn ProcessContext> = Box::new(BeatCtx::new(12.4));
     let times = run_track(&mut e, &mut ctx, 4096);
-    assert!(!times.is_empty(), "host beat position should fire spawns");
-    // 0.25..12.25 step 0.25 -> about 49 events.
-    assert_eq!(times.len(), 49, "grid should march from 0.25 to 12.25");
+    assert_eq!(
+        times.len(),
+        1,
+        "mid-song resume must not burst-spawn, got {}",
+        times.len()
+    );
 }
 
