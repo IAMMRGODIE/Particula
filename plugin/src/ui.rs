@@ -455,8 +455,7 @@ pub struct ParticulaView {
     about_fade: f32,
     /// Dim cursor for the master off state (0 = lit, 1 = fully dimmed).
     off_dim: f32,
-    /// PANIC dot fade cursor: 1 after a panic, eases to 0 over ~0.35 s.
-    panic_dim: f32,
+
     /// Randomize targets being eased into (id, target) on each tick.
     randomize_pending: Vec<(String, f32)>,
 
@@ -512,7 +511,7 @@ impl i_am_dsp_iced::SyncedView for ParticulaView {
             ParticulaMessage::Panic => {
                 self.panic_flag
                     .store(true, std::sync::atomic::Ordering::Relaxed);
-                self.panic_dim = 1.0;
+                self.panic_fade_dots();
             }
             ParticulaMessage::Shoot => {
                 let pool = snapshot("max_particles", &self.param_map)
@@ -576,9 +575,29 @@ impl ParticulaView {
             about: false,
             about_fade: 0.0,
             off_dim: 0.0,
-            panic_dim: 0.0,
             randomize_pending: Vec::new(),
             last_frame: None,
+        }
+    }
+
+    /// PANIC: re-anchor every lit dot so it finishes its remaining life as a
+    /// smooth 0.35s fade-out *in its own data* (no global brightness hack):
+    /// find x with 0.35/(x + 0.35) == current_alpha, then age = x,
+    /// lifetime = x + 0.35. Dots that are already invisible die instantly;
+    /// new spawn events later replace the slots and light up normally.
+    fn panic_fade_dots(&mut self) {
+        for ring in self.dots.iter_mut() {
+            for d in ring.iter_mut() {
+                let a = dot_alpha(d);
+                if a <= 0.02 {
+                    d.lifetime = 0.0;
+                    d.age = 0.0;
+                } else {
+                    let x = 0.35 * (1.0 / a - 1.0);
+                    d.age = x;
+                    d.lifetime = x + 0.35;
+                }
+            }
         }
     }
 
@@ -662,19 +681,6 @@ impl ParticulaView {
         // About overlay fade.
         let goal = if self.about { 1.0 } else { 0.0 };
         self.about_fade += (goal - self.about_fade) * k;
-        // Panic dot fade (all sigil dots fade out as history/particles clear),
-        // then the dot slots themselves are wiped the instant the fade lands,
-        // so they stay dark until the next spawn event assigns a new slot.
-        let panic_was = self.panic_dim;
-        self.panic_dim = (self.panic_dim - dt / 0.35).max(0.0);
-        if panic_was > 0.0 && self.panic_dim == 0.0 {
-            for ring in self.dots.iter_mut() {
-                for d in ring.iter_mut() {
-                    d.lifetime = 0.0;
-                    d.age = 0.0;
-                }
-            }
-        }
         // Master-off dim.
         let off_goal = snapshot("enabled", &self.param_map)
             .map(|s| if s.value > 0.5 { 0.0 } else { 1.0 })
@@ -738,7 +744,6 @@ impl ParticulaView {
                 phases: self.ring_phases,
                 bg_phase: self.bg_phase,
                 shift: self.centre_shift,
-                dot_fade: 1.0 - self.panic_dim,
             })
             .width(Length::Fill)
             .height(Length::Fill),
@@ -1517,8 +1522,6 @@ struct SigilCanvas {
     bg_phase: f32,
     /// Horizontal nudge applied to the pattern centre (px).
     shift: f32,
-    /// Global brightness multiplier for the lit dots (panic fade-out).
-    dot_fade: f32,
 }
 
 impl<M> canvas::Program<M> for SigilCanvas {
@@ -1592,7 +1595,7 @@ impl<M> canvas::Program<M> for SigilCanvas {
                 let angle = base_angle + phase;
                 let dot_pos = iced::Point::new(c.x + angle.cos() * r, c.y + angle.sin() * r);
                 let d = &self.dots[ring][slot];
-                let alpha = dot_alpha(d) * self.dot_fade;
+                let alpha = dot_alpha(d);
                 if alpha > 0.02 {
                     frame.fill(&Path::circle(dot_pos, 2.6), Color::from_rgba(1.0, 1.0, 1.0, alpha));
                 } else {
