@@ -499,7 +499,7 @@ impl i_am_dsp_iced::SyncedView for ParticulaView {
                 self.randomize_pending = random_targets(&self.param_map);
             }
             ParticulaMessage::Snap { id } => {
-                if let Some(v) = snap_pow2_target(&self.param_map, id) {
+                if let Some(v) = snap_target(&self.param_map, id) {
                     // Ease toward the snapped power of two through the same
                     // pending channel as Randomize/Reset so the value glides
                     // instead of jumping.
@@ -1135,6 +1135,10 @@ impl ParticulaView {
 }
 
 // -------------------------------- randomize ---------------------------------
+/// Parameters whose numeric value double-clicks snap to the nearest multiple
+/// of a step (bipolar shifts: fine musical offsets at 500 Hz steps, incl. 0).
+const SNAP_MULT: &[(&str, f32)] = &[("freq_shift_min", 500.0), ("freq_shift_max", 500.0)];
+
 /// Parameters whose numeric value double-clicks snap to the nearest power
 /// of two (beats, pitch and stretch factors — easy musical alignment).
 const SNAP_POW2: &[&str] = &[
@@ -1149,28 +1153,38 @@ const SNAP_POW2: &[&str] = &[
     "texture_stretch",
 ];
 
-/// Snap target for a parameter: nearest power of two within its range.
-fn snap_pow2_target(map: &ParamMap, id: &'static str) -> Option<f32> {
+/// Snap target for a parameter: a fixed-step multiple (SNAP_MULT) or the
+/// nearest power of two (SNAP_POW2), both within the parameter range.
+fn snap_target(map: &ParamMap, id: &'static str) -> Option<f32> {
+    let snap = snapshot(id, map)?;
+    if let Some((_, step)) = SNAP_MULT.iter().find(|(p, _)| *p == id) {
+        let v = (snap.value / step).round() * step;
+        return Some(v.clamp(snap.min, snap.max));
+    }
     if !SNAP_POW2.contains(&id) {
         return None;
     }
-    let snap = snapshot(id, map)?;
-    let cur = snap.value.abs().max(1e-6);
-    let exp = cur.log2().round();
-    let mut v = 2.0_f32.powf(exp);
-    v = v.clamp(snap.min, snap.max);
-    // Clamping may leave it off-grid; pull back to the nearest in-range power.
-    if v == snap.max {
-        let smaller = 2.0_f32.powf((snap.max / 2.0).log2().round());
-        v = smaller.max(snap.min);
+    // Nearest power of two within range (same helper, re-implemented below).
+    fn pow2(map: &ParamMap, id: &'static str) -> Option<f32> {
+        let snap = snapshot(id, map)?;
+        let cur = snap.value.abs().max(1e-6);
+        let exp = cur.log2().round();
+        let mut v = 2.0_f32.powf(exp);
+        v = v.clamp(snap.min, snap.max);
+        if v == snap.max {
+            let smaller = 2.0_f32.powf((snap.max / 2.0).log2().round());
+            v = smaller.max(snap.min);
+        }
+        if v == snap.min && snap.min > 0.0 {
+            let bigger = 2.0_f32.powf((snap.min * 2.0).log2().round());
+            v = bigger.min(snap.max);
+        }
+        Some(v)
     }
-    if v == snap.min && snap.min > 0.0 {
-        let bigger = 2.0_f32.powf((snap.min * 2.0).log2().round());
-        v = bigger.min(snap.max);
-    }
-    Some(v)
+    pow2(map, id)
 }
 
+/// Snap target for a parameter: nearest power of two within its range.
 /// Factory defaults, mirroring the engine's initial parameter values.
 /// (AtomicValue carries no default, so the GUI keeps its own copy.)
 const DEFAULTS: &[(&str, f32)] = &[
