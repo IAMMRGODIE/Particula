@@ -662,8 +662,19 @@ impl ParticulaView {
         // About overlay fade.
         let goal = if self.about { 1.0 } else { 0.0 };
         self.about_fade += (goal - self.about_fade) * k;
-        // Panic dot fade (all sigil dots fade out as history/particles clear).
+        // Panic dot fade (all sigil dots fade out as history/particles clear),
+        // then the dot slots themselves are wiped the instant the fade lands,
+        // so they stay dark until the next spawn event assigns a new slot.
+        let panic_was = self.panic_dim;
         self.panic_dim = (self.panic_dim - dt / 0.35).max(0.0);
+        if panic_was > 0.0 && self.panic_dim == 0.0 {
+            for ring in self.dots.iter_mut() {
+                for d in ring.iter_mut() {
+                    d.lifetime = 0.0;
+                    d.age = 0.0;
+                }
+            }
+        }
         // Master-off dim.
         let off_goal = snapshot("enabled", &self.param_map)
             .map(|s| if s.value > 0.5 { 0.0 } else { 1.0 })
