@@ -28,6 +28,29 @@ impl ProcessContext for TestCtx {
     fn events(&self) -> &[NoteEvent] { &[] }
 }
 
+/// Test context pinned to a specific host beat position (in beats).
+struct BeatCtx {
+    infos: ProcessInfos,
+}
+impl BeatCtx {
+    fn new(beat: f32) -> Self {
+        let mut infos = ProcessInfos::default();
+        infos.sample_rate = SR;
+        infos.tempo = Some(120.0);
+        infos.playing = true;
+        infos.trustable = true;
+        infos.current_beat_number = Some(beat);
+        Self { infos }
+    }
+}
+impl ProcessContext for BeatCtx {
+    fn infos(&self) -> &ProcessInfos { &self.infos }
+    fn next_event(&mut self) -> Option<NoteEvent> { None }
+    fn send_event(&mut self, _: NoteEvent) {}
+    fn clear_events(&mut self) {}
+    fn events(&self) -> &[NoteEvent] { &[] }
+}
+
 /// Runs the engine, recording the sample index of every spawn.
 fn run_track(engine: &mut ParticulaEngine, ctx: &mut Box<dyn ProcessContext>, n: usize) -> Vec<usize> {
     let mut spawn_times = Vec::new();
@@ -131,3 +154,21 @@ fn beat_sync_mode_spawns_continuously_on_the_grid() {
         times.len()
     );
 }
+
+#[test]
+fn host_beat_number_drives_the_grid() {
+    // Static host beat position: 12.4 (bar 3 + 0.4 into the bar at 4/4).
+    // The engine must use it (not the internal counter) and fire spawns on
+    // the 0.25-beat grid until the target passes 12.4.
+    let mut e = ParticulaEngine::<1>::new(4096, SR, 44);
+    e.spawn_sync = true;
+    e.spawn_interval_beats = 0.25;
+    e.max_particles = 256.0;
+    e.texture_blend = 0.0;
+    let mut ctx: Box<dyn ProcessContext> = Box::new(BeatCtx::new(12.4));
+    let times = run_track(&mut e, &mut ctx, 4096);
+    assert!(!times.is_empty(), "host beat position should fire spawns");
+    // 0.25..12.25 step 0.25 -> about 49 events.
+    assert_eq!(times.len(), 49, "grid should march from 0.25 to 12.25");
+}
+

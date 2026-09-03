@@ -588,8 +588,20 @@ impl<const CHANNELS: usize> Effect<CHANNELS> for ParticulaEngine<CHANNELS> {
 
         // 3. spawn scheduling: beat-quantized when spawn_sync, otherwise a
         //    free-running millisecond interval (Architecture.md sec.6/7).
+        //
+        // Beat position: prefer the host's `current_beat_number` (already in
+        // beats) when trusted and present — it stays accurate across bars and
+        // transport seeks — and fall back to the internal beat counter.
+        let beat_now = if infos.trustable {
+            match infos.current_beat_number {
+                Some(cbn) => cbn,
+                None => self.bpm.read(),
+            }
+        } else {
+            self.bpm.read()
+        };
         let spawn_due = if self.spawn_sync {
-            let due = self.bpm.read() >= self.next_spawn_beat;
+            let due = beat_now >= self.next_spawn_beat;
             if due {
                 self.next_spawn_beat += self.spawn_interval_beats.max(0.03125);
             }
