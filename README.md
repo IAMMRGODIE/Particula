@@ -1,4 +1,4 @@
-# Particula Cloud
+# Particula
 
 实验性声音设计用颗粒效果器 —— 一个 CLAP 插件。
 
@@ -40,7 +40,7 @@
 cargo build --release -p particula_plugin
 # 产出 .clap（dll 改成 CLAP 扩展名）
 cp target/release/particula_plugin.dll target/release/Particula.clap
-# 把 ParticulaCloud.clap 放进 DAW 的 CLAP 插件目录即可
+# 把 Particula.clap 放进 DAW 的 CLAP 插件目录即可
 ```
 
 ### Standalone（不依赖 DAW）
@@ -52,7 +52,7 @@ cargo run --release -p particula_plugin --example standalone --offline
 ### 无头探针（验证 wet 通路）
 
 ```bash
-cargo run --release -p particula_plugin --example clap_probe --offline -- target/release/ParticulaCloud.clap
+cargo run --release -p particula_plugin --example clap_probe --offline -- target/release/Particula.clap
 ```
 
 > standalone 依赖 i_am_dsp / i_am_plugin 的本地提交；其中 i_am_plugin 的

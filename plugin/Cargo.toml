@@ -2,7 +2,7 @@
 name = "particula_plugin"
 version = "0.1.0"
 edition = "2024"
-description = "Particula Cloud — CLAP plugin + standalone host (via i_am_plugin / i_am_dsp_iced)"
+description = "Particula — CLAP plugin + standalone host (via i_am_plugin / i_am_dsp_iced)"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

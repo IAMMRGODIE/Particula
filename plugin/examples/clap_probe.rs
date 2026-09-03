@@ -1,4 +1,4 @@
-//! Headless CLAP probe for ParticulaCloud.
+//! Headless CLAP probe for Particula.
 //!
 //! Loads the built plugin, feeds a known stereo signal through the Main
 //! stereo in/out for ~2.5 s, and reports whether the wet path produces any
@@ -26,7 +26,7 @@ const BLOCKS: usize = 60; // ~2.5 s
 fn main() -> Result<(), Box<dyn Error>> {
     let path = std::env::args()
         .nth(1)
-        .unwrap_or_else(|| "target/release/ParticulaCloud.clap".to_string());
+        .unwrap_or_else(|| "target/release/Particula.clap".to_string());
     println!("loading {path}");
 
     let bundle = unsafe { PluginBundle::load(&path)? };

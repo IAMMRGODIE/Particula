@@ -1,4 +1,4 @@
-//! Particula Cloud — CLAP plugin entry + standalone processor.
+//! Particula — CLAP plugin entry + standalone processor.
 //!
 //! Host parameter automation flows through Paramed: the engine exposes a
 //! derived Parameters table, Paramed mirrors it into an atomic ParamMap
@@ -8,7 +8,7 @@
 //!
 //! Build (offline):
 //!   cargo build --release -p particula_plugin
-//! then rename target/release/particula_plugin.dll -> ParticulaCloud.clap
+//! then rename target/release/particula_plugin.dll -> Particula.clap
 
 mod ui;
 
@@ -136,7 +136,7 @@ impl Processor for ParticulaProcessor {
 }
 
 impl Plugin for ParticulaProcessor {
-    const DESCRIPTOR: Descriptor = Descriptor::new("dev.particula.cloud", "I Am Particula")
+    const DESCRIPTOR: Descriptor = Descriptor::new("dev.particula", "Particula")
         .with_tags(&[Tag::AudioEffect, Tag::Granular])
         .with_vendor("I Am Plugins")
         .with_version(env!("CARGO_PKG_VERSION"));
