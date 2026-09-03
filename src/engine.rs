@@ -220,6 +220,10 @@ pub struct ParticulaEngine<const CHANNELS: usize = 1> {
     /// wipes the delay line + particle pool (see `clear_all`).
     #[skip]
     panic_flag: Arc<AtomicBool>,
+    /// True while the host provides a reliable BPM or beat position, so the
+    /// UI can hide the fallback BPM control.
+    #[skip]
+    host_tempo_known: Arc<AtomicBool>,
     #[skip]
     spawner: Spawner,
     #[skip]
@@ -315,6 +319,7 @@ impl<const CHANNELS: usize> ParticulaEngine<CHANNELS> {
             slots: Vec::with_capacity(DEFAULT_POOL_CAPACITY),
             free: Vec::with_capacity(DEFAULT_POOL_CAPACITY),
             panic_flag: Arc::new(AtomicBool::new(false)),
+            host_tempo_known: Arc::new(AtomicBool::new(false)),
             spawner: Spawner::new(),
             rng: SplitMix64::new(seed),
             spawn_notifier: None,
@@ -335,6 +340,12 @@ impl<const CHANNELS: usize> ParticulaEngine<CHANNELS> {
     /// once on the next process() call and clears history + particles.
     pub fn panic_flag(&self) -> Arc<AtomicBool> {
         self.panic_flag.clone()
+    }
+
+    /// Host-BPM/beat availability latch, refreshed each process() call so the
+    /// GUI can conditionally hide the fallback BPM control.
+    pub fn host_tempo_known_flag(&self) -> Arc<AtomicBool> {
+        self.host_tempo_known.clone()
     }
 
     /// Resizes the history delay line, preserving the freshest tail. The
@@ -538,6 +549,10 @@ impl<const CHANNELS: usize> Effect<CHANNELS> for ParticulaEngine<CHANNELS> {
         if self.panic_flag.swap(false, Ordering::Relaxed) {
             self.clear_all();
         }
+        // Refreshes host tempo/beat availability for the GUI.
+        let host_known = infos.trustable
+            && (infos.tempo.is_some_and(|t| t > 0.0) || infos.current_beat_number.is_some());
+        self.host_tempo_known.store(host_known, Ordering::Relaxed);
 
         // 0b. History length: beats (BPM grid on) or ms; rebuilds the delay
         //     line when the target capacity changes, keeping the freshest tail.

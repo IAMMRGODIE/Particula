@@ -160,7 +160,7 @@ fn slider_domain(id: &str, min: f32, max: f32, value: f32) -> (f32, f32, f32, bo
 }
 
 /// Whether a parameter row shows based on mode / spawn-sync conditions.
-fn cond_matches(cond: u8, mode: usize, sync_on: bool) -> bool {
+fn cond_matches(cond: u8, mode: usize, sync_on: bool, host_known: bool) -> bool {
     match cond {
         0 => true,
         1..=4 => usize::from(cond) == mode + 1,
@@ -171,6 +171,8 @@ fn cond_matches(cond: u8, mode: usize, sync_on: bool) -> bool {
         11 => mode == 2 && sync_on,
         14 => mode == 3 && !sync_on,
         15 => mode == 3 && sync_on,
+        // Fallback BPM: only meaningful while the host reports no BPM/beats.
+        16 => host_known,
         _ => false,
     }
 }
@@ -252,7 +254,7 @@ const LEFT_PAGES: &[Pg] = &[
             ("spawn_sync", 0),
             ("spawn_interval_ms", 6),
             ("spawn_interval_beats", 5),
-            ("fallback_bpm", 0),
+            ("fallback_bpm", 16),
             ("max_particles", 0),
             ("reverse_chance", 0),
         ],
@@ -391,6 +393,8 @@ pub struct ParticulaView {
     spawn_rx: Arc<Mutex<Receiver<SpawnEvent>>>,
     /// PANIC latch (set by the button, consumed by the audio thread).
     panic_flag: Arc<std::sync::atomic::AtomicBool>,
+    /// Host BPM/beat availability (hides the fallback BPM row when true).
+    host_tempo_known: Arc<std::sync::atomic::AtomicBool>,
 
     /// Lit dots per ring (circular slot buffers).
     dots: [RingSlots; RINGS],
@@ -502,12 +506,14 @@ impl ParticulaView {
         stats: Arc<[std::sync::atomic::AtomicUsize; 3]>,
         spawn_rx: Arc<Mutex<Receiver<SpawnEvent>>>,
         panic_flag: Arc<std::sync::atomic::AtomicBool>,
+        host_tempo_known: Arc<std::sync::atomic::AtomicBool>,
     ) -> Self {
         Self {
             param_map,
             stats,
             spawn_rx,
             panic_flag,
+            host_tempo_known,
             dots: [[Dot {
                 age: 0.0,
                 lifetime: 0.0,
@@ -865,10 +871,13 @@ impl ParticulaView {
         let sync_on = snapshot("spawn_sync", &self.param_map)
             .map(|s| s.value > 0.5)
             .unwrap_or(false);
+        let host_known = self
+            .host_tempo_known
+            .load(std::sync::atomic::Ordering::Relaxed);
         let rows = page
             .1
             .iter()
-            .filter(|(_, cond)| cond_matches(*cond, mode, sync_on))
+            .filter(|(_, cond)| cond_matches(*cond, mode, sync_on, host_known))
             .count();
         // Header bar (tabs + title) + top/bottom padding; rows at ~30 px each.
         72.0 + rows as f32 * 30.0
@@ -900,12 +909,15 @@ impl ParticulaView {
         let sync_on = snapshot("spawn_sync", &self.param_map)
             .map(|s| s.value > 0.5)
             .unwrap_or(false);
+        let host_known = self
+            .host_tempo_known
+            .load(std::sync::atomic::Ordering::Relaxed);
         // Page-transition cursor drives the content crossfade.
         let a = 1.0 - anim.fade * 0.72;
         let rows = page
             .1
             .iter()
-            .filter(|(_, cond)| cond_matches(*cond, mode, sync_on))
+            .filter(|(_, cond)| cond_matches(*cond, mode, sync_on, host_known))
             .map(|(id, _)| self.param_row(id, a))
             .collect::<Vec<_>>();
 
