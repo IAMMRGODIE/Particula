@@ -1235,13 +1235,11 @@ fn random_targets(map: &ParamMap) -> Vec<(String, f32)> {
             continue;
         };
         let value = match &*av {
-            AtomicValue::Float {
-                range,
-                logarithmic,
-                ..
-            } => {
+            AtomicValue::Float { range, .. } => {
                 let (lo, hi) = (*range.start(), *range.end());
-                if *logarithmic && lo > 0.0 {
+                // Log-uniform whenever the slider itself is log-scaled
+                // (LOG_PARAMS), regardless of the engine's derive metadata.
+                if log_param(&id) && lo > 0.0 {
                     lo * (hi / lo).powf(rng.next_f32())
                 } else {
                     rng.range(lo, hi)
