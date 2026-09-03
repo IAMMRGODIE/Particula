@@ -150,10 +150,14 @@ pub struct ParticulaEngine<const CHANNELS: usize = 1> {
     pub random_walk_step: f32,
     #[range(min = 1.0, max = 2000.0)]
     pub random_walk_interval_ms: f32,
+    #[range(min = 0.03125, max = 16.0)]
+    pub random_walk_interval_beats: f32,
     #[range(min = 1.0, max = 2000.0)]
     pub peak_window_ms: f32,
     #[range(min = 1.0, max = 1000.0)]
     pub peak_update_ms: f32,
+    #[range(min = 0.03125, max = 16.0)]
+    pub peak_update_beats: f32,
     #[range(min = 0.0, max = 1.0)]
     pub peak_threshold: f32,
 
@@ -281,8 +285,10 @@ impl<const CHANNELS: usize> ParticulaEngine<CHANNELS> {
             lfo_depth: 0.15,
             random_walk_step: 0.02,
             random_walk_interval_ms: 200.0,
+            random_walk_interval_beats: 1.0,
             peak_window_ms: 150.0,
             peak_update_ms: 30.0,
+            peak_update_beats: 1.0,
             peak_threshold: 0.01,
             feedback_gain: 0.0,
             feedback_delay_ms: 40.0,
@@ -468,7 +474,14 @@ impl<const CHANNELS: usize> ParticulaEngine<CHANNELS> {
             2 => PositionMod::random_walk(
                 self.random_walk_step,
                 self.lfo_depth,
-                (self.random_walk_interval_ms * sample_rate as f32 / 1000.0) as usize,
+                if self.spawn_sync {
+                    (self.random_walk_interval_beats.max(0.03125) * tempo.max(1.0)
+                        / 60.0
+                        * sample_rate as f32) as usize
+                } else {
+                    (self.random_walk_interval_ms * sample_rate as f32 / 1000.0) as usize
+                }
+                .max(1),
                 &mut self.rng,
             ),
             _ => PositionMod::peak_follow(),
@@ -610,7 +623,13 @@ impl<const CHANNELS: usize> Effect<CHANNELS> for ParticulaEngine<CHANNELS> {
 
         // 3. shared peak-follow target (periodic update of the loudest
         //    sample in the recent history window).
-        let update = ((self.peak_update_ms * sample_rate as f32 / 1000.0) as usize).max(1);
+        let update = if self.spawn_sync {
+            ((self.peak_update_beats.max(0.03125) * 60.0 / tempo.max(1.0))
+                * sample_rate as f32) as usize
+        } else {
+            (self.peak_update_ms * sample_rate as f32 / 1000.0) as usize
+        }
+        .max(1);
         if self.sample_count >= self.next_peak_update {
             let window = ((self.peak_window_ms * sample_rate as f32 / 1000.0) as usize).max(1);
             self.peak_position_t = recent_peak_position(&self.history, window, self.peak_threshold);

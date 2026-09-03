@@ -136,7 +136,9 @@ const LOG_PARAMS: &[&str] = &[
     "history_len_beats",
     "feedback_damping_hz",
     "random_walk_interval_ms",
+    "random_walk_interval_beats",
     "peak_window_ms",
+    "peak_update_beats",
     "peak_update_ms",
 ];
 
@@ -164,6 +166,11 @@ fn cond_matches(cond: u8, mode: usize, sync_on: bool) -> bool {
         1..=4 => usize::from(cond) == mode + 1,
         5 => sync_on,
         6 => !sync_on,
+        // Walk / Peak modes AND the sync unit state.
+        10 => mode == 2 && !sync_on,
+        11 => mode == 2 && sync_on,
+        14 => mode == 3 && !sync_on,
+        15 => mode == 3 && sync_on,
         _ => false,
     }
 }
@@ -187,8 +194,10 @@ pub fn label(id: &str) -> String {
         "reverse_chance" => "Reverse",
         "random_walk_step" => "Walk Step",
         "random_walk_interval_ms" => "Walk Int",
+        "random_walk_interval_beats" => "Walk Beats",
         "peak_window_ms" => "Peak Win",
         "peak_update_ms" => "Peak Upd",
+        "peak_update_beats" => "Peak Beats",
         "peak_threshold" => "Peak Thr",
         "spawn_interval_beats" => "Beats",
         "fallback_bpm" => "Fallback",
@@ -282,9 +291,11 @@ const RIGHT_PAGES: &[Pg] = &[
             ("position_mode", 0),
             ("position_smooth_ms", 0),
             ("random_walk_step", 3),
-            ("random_walk_interval_ms", 3),
+            ("random_walk_interval_ms", 10),
+            ("random_walk_interval_beats", 11),
             ("peak_window_ms", 4),
-            ("peak_update_ms", 4),
+            ("peak_update_ms", 14),
+            ("peak_update_beats", 15),
             ("peak_threshold", 4),
         ],
     ),
@@ -402,6 +413,8 @@ pub struct ParticulaView {
     about: bool,
     /// Fade cursor for the About overlay (0..1), eased every tick.
     about_fade: f32,
+    /// Dim cursor for the master off state (0 = lit, 1 = fully dimmed).
+    off_dim: f32,
     /// Randomize targets being eased into (id, target) on each tick.
     randomize_pending: Vec<(String, f32)>,
 
@@ -508,6 +521,7 @@ impl ParticulaView {
             panel_right: PanelAnim::hidden(),
             about: false,
             about_fade: 0.0,
+            off_dim: 0.0,
             randomize_pending: Vec::new(),
             last_frame: None,
         }
@@ -593,6 +607,11 @@ impl ParticulaView {
         // About overlay fade.
         let goal = if self.about { 1.0 } else { 0.0 };
         self.about_fade += (goal - self.about_fade) * k;
+        // Master-off dim.
+        let off_goal = snapshot("enabled", &self.param_map)
+            .map(|s| if s.value > 0.5 { 0.0 } else { 1.0 })
+            .unwrap_or(0.0);
+        self.off_dim += (off_goal - self.off_dim) * k;
         // Sigil nudges smoothly away from the visible panel.
         // Target follows the panel *intent* (target flag), so the sigil starts
         // returning the instant the panel closes; easing is faster than the
@@ -762,7 +781,26 @@ impl ParticulaView {
             .align_y(iced::Alignment::Center)
             .style(panel_style(Some(bg_ov), LINE, 1.0, 0.0))
             .into();
+            // Swallow all pointer events so nothing below can be nudged
+            // (mouse_area with a harmless message consumes the press).
+            let overlay: Element<'static, ParticulaMessage> =
+                iced::widget::mouse_area(overlay)
+                    .on_press(ParticulaMessage::Tick)
+                    .into();
             return iced::widget::stack![base, overlay].into();
+        }
+
+        // ---- master-off dim layer (visual only, clicks pass through) ----
+        if self.off_dim > 0.004 {
+            let dim = Color::from_rgba(0.0, 0.0, 0.0, 0.55 * self.off_dim);
+            let shade: Element<'static, ParticulaMessage> = container(
+                iced::widget::space().width(Length::Fill).height(Length::Fill),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(panel_style(Some(dim), Color::TRANSPARENT, 0.0, 0.0))
+            .into();
+            return iced::widget::stack![base, shade].into();
         }
 
         base.into()
@@ -1044,6 +1082,8 @@ const SNAP_POW2: &[&str] = &[
     "feedback_delay_beats",
     "lfo_rate_beats",
     "history_len_beats",
+    "random_walk_interval_beats",
+    "peak_update_beats",
     "pitch_min",
     "pitch_max",
     "texture_stretch",
@@ -1104,8 +1144,10 @@ const DEFAULTS: &[(&str, f32)] = &[
     ("lfo_depth", 0.15),
     ("random_walk_step", 0.02),
     ("random_walk_interval_ms", 200.0),
+    ("random_walk_interval_beats", 1.0),
     ("peak_window_ms", 150.0),
     ("peak_update_ms", 30.0),
+    ("peak_update_beats", 1.0),
     ("peak_threshold", 0.01),
     ("feedback_gain", 0.0),
     ("feedback_delay_ms", 40.0),
