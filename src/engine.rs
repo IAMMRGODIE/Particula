@@ -2,7 +2,7 @@
 
 use std::{
     f32::consts::PI,
-    sync::{Arc, atomic::{AtomicBool, Ordering}},
+    sync::{Arc, atomic::{AtomicBool, AtomicUsize, Ordering}},
 };
 
 use crossbeam_channel::Sender;
@@ -230,6 +230,10 @@ pub struct ParticulaEngine<const CHANNELS: usize = 1> {
     /// UI can hide the fallback BPM control.
     #[skip]
     host_tempo_known: Arc<AtomicBool>,
+    /// SHOOT latch: the GUI stores a particle count, the audio thread consumes
+    /// it once and spawns that many instantly.
+    #[skip]
+    shoot_count: Arc<AtomicUsize>,
     #[skip]
     spawner: Spawner,
     #[skip]
@@ -328,6 +332,7 @@ impl<const CHANNELS: usize> ParticulaEngine<CHANNELS> {
             free: Vec::with_capacity(DEFAULT_POOL_CAPACITY),
             panic_flag: Arc::new(AtomicBool::new(false)),
             host_tempo_known: Arc::new(AtomicBool::new(false)),
+            shoot_count: Arc::new(AtomicUsize::new(0)),
             spawner: Spawner::new(),
             rng: SplitMix64::new(seed),
             spawn_notifier: None,
@@ -350,10 +355,44 @@ impl<const CHANNELS: usize> ParticulaEngine<CHANNELS> {
         self.panic_flag.clone()
     }
 
+    /// SHOOT latch handle (store a count to instantly spawn that many).
+    pub fn shoot_flag(&self) -> Arc<AtomicUsize> {
+        self.shoot_count.clone()
+    }
+
     /// Host-BPM/beat availability latch, refreshed each process() call so the
     /// GUI can conditionally hide the fallback BPM control.
     pub fn host_tempo_known_flag(&self) -> Arc<AtomicBool> {
         self.host_tempo_known.clone()
+    }
+
+    /// Spawns exactly one particle immediately (subject to the pool gates).
+    /// Used by the normal schedule and the SHOOT latch; advances the shared
+    /// spawn sequence so reads stay on the arithmetic grid.
+    fn spawn_one(&mut self, sample_rate: usize, tempo: f32) -> bool {
+        self.spawner.bump_sequence();
+        let lives = self.live_count();
+        if lives >= self.max_particles.max(1.0) as usize
+            || lives >= DEFAULT_POOL_CAPACITY
+        {
+            return false;
+        }
+        let idx = self
+            .free
+            .pop()
+            .unwrap_or_else(|| {
+                self.slots.push(None);
+                self.slots.len() - 1
+            });
+        self.slots[idx] = Some(self.make_particle(sample_rate, tempo));
+        self.spawn_count += 1;
+        if let (Some(tx), Some(p)) = (&self.spawn_notifier, &self.slots[idx]) {
+            let _ = tx.send(SpawnEvent {
+                lifetime_samples: p.lifetime(),
+                live: self.live_count(),
+            });
+        }
+        true
     }
 
     /// Resizes the history delay line, preserving the freshest tail. The
@@ -652,23 +691,14 @@ impl<const CHANNELS: usize> Effect<CHANNELS> for ParticulaEngine<CHANNELS> {
             self.spawner.poll(self.sample_count, interval)
         };
         if spawn_due {
-            self.spawner.bump_sequence();
-            let lives = self.live_count();
-            if lives < self.max_particles.max(1.0) as usize && lives < DEFAULT_POOL_CAPACITY {
-                let idx = self
-                    .free
-                    .pop()
-                    .unwrap_or_else(|| {
-                        self.slots.push(None);
-                        self.slots.len() - 1
-                    });
-                self.slots[idx] = Some(self.make_particle(sample_rate, tempo));
-                self.spawn_count += 1;
-                if let (Some(tx), Some(p)) = (&self.spawn_notifier, &self.slots[idx]) {
-                    let _ = tx.send(SpawnEvent {
-                        lifetime_samples: p.lifetime(),
-                        live: self.live_count(),
-                    });
+            self.spawn_one(sample_rate, tempo);
+        }
+        // SHOOT: instantly spawn whatever count the GUI latched.
+        let shoot = self.shoot_count.swap(0, Ordering::Relaxed);
+        if shoot > 0 {
+            for _ in 0..shoot {
+                if !self.spawn_one(sample_rate, tempo) {
+                    break;
                 }
             }
         }

@@ -44,6 +44,8 @@ pub struct ParticulaProcessor {
     panic_flag: Arc<std::sync::atomic::AtomicBool>,
     /// Host BPM/beat availability (hides the fallback BPM control in the GUI).
     host_tempo_known: Arc<std::sync::atomic::AtomicBool>,
+    /// SHOOT latch shared with the GUI (instant particle burst).
+    shoot: Arc<AtomicUsize>,
 }
 
 impl ParticulaProcessor {
@@ -59,12 +61,14 @@ impl ParticulaProcessor {
         engine.set_spawn_notifier(tx);
         let panic_flag = engine.panic_flag();
         let host_tempo_known = engine.host_tempo_known_flag();
+        let shoot = engine.shoot_flag();
         Self {
             engine: Paramed::new(engine),
             stats: Arc::new([AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0)]),
             spawn_rx: Arc::new(Mutex::new(rx)),
             panic_flag,
             host_tempo_known,
+            shoot,
         }
     }
 
@@ -136,6 +140,7 @@ impl Processor for ParticulaProcessor {
             self.spawn_rx.clone(),
             self.panic_flag.clone(),
             self.host_tempo_known.clone(),
+            self.shoot.clone(),
         )
     }
 }

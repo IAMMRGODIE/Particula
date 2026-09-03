@@ -67,6 +67,8 @@ pub enum ParticulaMessage {
     Randomize,
     /// PANIC: request the engine to wipe history + particles.
     Panic,
+    /// SHOOT: instantly burst-spawn pool/16 particles.
+    Shoot,
     MasterEnabled(bool),
     Tick,
 }
@@ -395,6 +397,8 @@ pub struct ParticulaView {
     panic_flag: Arc<std::sync::atomic::AtomicBool>,
     /// Host BPM/beat availability (hides the fallback BPM row when true).
     host_tempo_known: Arc<std::sync::atomic::AtomicBool>,
+    /// SHOOT latch: store a count here, the audio thread spawns them instantly.
+    shoot: Arc<std::sync::atomic::AtomicUsize>,
 
     /// Lit dots per ring (circular slot buffers).
     dots: [RingSlots; RINGS],
@@ -475,6 +479,13 @@ impl i_am_dsp_iced::SyncedView for ParticulaView {
                 self.panic_flag
                     .store(true, std::sync::atomic::Ordering::Relaxed);
             }
+            ParticulaMessage::Shoot => {
+                let pool = snapshot("max_particles", &self.param_map)
+                    .map(|s| s.value)
+                    .unwrap_or(64.0);
+                let n = ((pool / 16.0).floor() as usize).max(1);
+                self.shoot.store(n, std::sync::atomic::Ordering::Relaxed);
+            }
             ParticulaMessage::MasterEnabled(v) => {
                 self.param_map.set("enabled", *v, std::sync::atomic::Ordering::Relaxed);
             }
@@ -507,6 +518,7 @@ impl ParticulaView {
         spawn_rx: Arc<Mutex<Receiver<SpawnEvent>>>,
         panic_flag: Arc<std::sync::atomic::AtomicBool>,
         host_tempo_known: Arc<std::sync::atomic::AtomicBool>,
+        shoot: Arc<std::sync::atomic::AtomicUsize>,
     ) -> Self {
         Self {
             param_map,
@@ -514,6 +526,7 @@ impl ParticulaView {
             spawn_rx,
             panic_flag,
             host_tempo_known,
+            shoot,
             dots: [[Dot {
                 age: 0.0,
                 lifetime: 0.0,
@@ -738,6 +751,9 @@ impl ParticulaView {
                 button(text("PANIC").font(MONO).size(9).color(TEXT_DIM))
                     .on_press(ParticulaMessage::Panic)
                     .style(flat_button),
+                button(text("SHOOT").font(MONO).size(9).color(TEXT_DIM))
+                    .on_press(ParticulaMessage::Shoot)
+                    .style(flat_button),
                 button(text("RANDOMIZE").font(MONO).size(9).color(TEXT_DIM))
                     .on_press(ParticulaMessage::Randomize)
                     .style(flat_button),
@@ -798,7 +814,7 @@ impl ParticulaView {
 
         // ---- master-off dim layer (visual only, clicks pass through) ----
         if self.off_dim > 0.004 {
-            let dim = Color::from_rgba(0.0, 0.0, 0.0, 0.55 * self.off_dim);
+            let dim = Color::from_rgba(0.0, 0.0, 0.0, 0.40 * self.off_dim);
             let shade: Element<'static, ParticulaMessage> = container(
                 iced::widget::space().width(Length::Fill).height(Length::Fill),
             )
