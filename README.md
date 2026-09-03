@@ -14,6 +14,10 @@
 
 更详细的可以去看 AI 写的 [Architecture.md](Architecture.md)。
 
+## 安装
+
+编译好的应该在 Release 里面有，把它放到 C:\Program Files\Common Files\CLAP 然后打开你的 daw 扫一扫就能看到了.
+
 ## 编译
 
 为了开发方便，在 `Cargo.toml` 里面 `i_am_dsp` 相关的依赖都是填的路径，所以在编译的时候需要先手动改一下.
