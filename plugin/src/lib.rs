@@ -163,6 +163,16 @@ impl Plugin for ParticulaProcessor {
         self.engine.param_map()
     }
 
+    /// Host stopped processing (pause / transport stop / unload): equivalent
+    /// to pressing PANIC — wipe history + texture + particles so the cloud
+    /// starts from a clean slate the next time processing resumes.
+    fn on_stop_processing(&mut self) {
+        self.engine
+            .value
+            .panic_flag()
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
     // Crimson Text (OFL, free for commercial use) embedded so the GUI can use
     // it as the display serif without depending on the host system fonts.
     const EMBEDDED_FONT: Option<&'static [u8]> =

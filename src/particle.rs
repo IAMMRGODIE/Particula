@@ -196,6 +196,11 @@ impl Particle {
             return None;
         }
         s *= self.gain;
+        // Defensive: a NaN/inf from any component (e.g. an extreme parametric
+        // combination) kills this voice instead of poisoning the render.
+        if !s.is_finite() {
+            return None;
+        }
 
         // Per-particle frequency shift (mono).
         let mut mono = [s];

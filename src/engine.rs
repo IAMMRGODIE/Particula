@@ -485,7 +485,10 @@ impl<const CHANNELS: usize> ParticulaEngine<CHANNELS> {
     /// decay bottoms out at the min_gain_ratio floor so the cloud cannot
     /// silently exhaust itself a few seconds in.
     pub fn spawn_rule_gain(&self, n: usize) -> f32 {
-        (self.initial_gain * self.gain_decay_ratio.powi(n as i32))
+        // powi(i32) can overflow (wrap) after years of spawning; clip the
+        // exponent so decay^quiet is never NaN/inf in practice.
+        let n_clamped = n.min(4096) as i32;
+        (self.initial_gain * self.gain_decay_ratio.powi(n_clamped))
             .max(self.initial_gain * self.min_gain_ratio)
     }
 
@@ -787,8 +790,11 @@ impl<const CHANNELS: usize> Effect<CHANNELS> for ParticulaEngine<CHANNELS> {
         }
 
         // 5. dry (per channel) + wet (pan-distributed particle voices).
+        // A non-finite mix is treated as silence for that channel so a stray
+        // NaN never sticks in the host's buffer chain.
         for c in 0..CHANNELS {
-            samples[c] = dry_in[c] * self.dry + wet[c];
+            let mix = dry_in[c] * self.dry + wet[c];
+            samples[c] = if mix.is_finite() { mix } else { 0.0 };
         }
     }
 }
