@@ -27,6 +27,7 @@ fn rms(v: &[f32]) -> f32 {
 /// freshest end.
 fn pan_pinned(seed: u64, pan: f32) -> ParticulaEngine<2> {
     let mut e = ParticulaEngine::<2>::new(2048, SR, seed);
+    e.spawn_sync = false;
     e.dry = 0.0;
     e.wet = 1.0;
     e.texture_blend = 0.0;
@@ -79,6 +80,7 @@ fn stereo_center_pan_gives_balanced_channels() {
 #[test]
 fn stereo_out_of_phase_input_silences_shared_history() {
     let mut e = ParticulaEngine::<2>::new(2048, SR, 4);
+    e.spawn_sync = false;
     e.dry = 0.0;
     e.wet = 1.0;
     e.texture_blend = 0.0;

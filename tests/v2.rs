@@ -96,6 +96,7 @@ fn texture_blend_changes_output() {
         .collect();
 
     let mut plain = ParticulaEngine::<1>::new(4096, SR, 21);
+    plain.spawn_sync = false;
     plain.dry = 0.4;
     plain.wet = 1.0;
     plain.texture_blend = 0.0;
@@ -104,6 +105,7 @@ fn texture_blend_changes_output() {
     let out_plain = run(&mut plain, &input);
 
     let mut textured = ParticulaEngine::<1>::new(4096, SR, 21);
+    textured.spawn_sync = false;
     textured.dry = 0.4;
     textured.wet = 1.0;
     textured.texture_blend = 0.8;

@@ -171,6 +171,13 @@ pub struct ParticulaEngine<const CHANNELS: usize = 1> {
     #[range(min = 0.0, max = 20000.0)]
     pub feedback_damping_hz: f32,
 
+    // History length: the delay line is runtime-resizable; the capacity is
+    // quantized to a power of two so the particle hot-loop mask stays valid.
+    #[range(min = 16.0, max = 5000.0)]
+    pub history_len_ms: f32,
+    #[range(min = 0.03125, max = 16.0)]
+    pub history_len_beats: f32,
+
     // WSOLA texture layer (v2).
     #[range(min = 0.0, max = 1.0)]
     pub texture_blend: f32,
@@ -281,6 +288,9 @@ impl<const CHANNELS: usize> ParticulaEngine<CHANNELS> {
             feedback_delay_ms: 40.0,
             feedback_delay_beats: 1.0,
             feedback_damping_hz: 3000.0,
+            history_len_ms: history_capacity.max(1) as f32 * 1000.0
+                / sample_rate.max(1) as f32,
+            history_len_beats: 2.0,
             texture_blend: 0.35,
             texture_window_ms: 85.0,
             texture_refresh_ms: 43.0,
@@ -321,6 +331,26 @@ impl<const CHANNELS: usize> ParticulaEngine<CHANNELS> {
         self.panic_flag.clone()
     }
 
+    /// Resizes the history delay line, preserving the freshest tail. The
+    /// capacity is quantized to a power of two (particle reads use a mask).
+    fn resize_history(&mut self, cap: usize) {
+        let old = self.history.capacity();
+        if cap == 0 || old == cap {
+            return;
+        }
+        let keep = old.min(cap);
+        let mut freshest_first = Vec::with_capacity(keep);
+        for i in 0..keep {
+            let slot = (self.history.current_pos() + old - 1 - i) % old;
+            freshest_first.push(self.history[slot]);
+        }
+        let mut nh = RingBuffer::new(cap);
+        for s in freshest_first.iter().rev() {
+            nh.push(*s);
+        }
+        self.history = nh;
+    }
+
     /// Wipes the delay line and kills every particle (PANIC button).
     fn clear_all(&mut self) {
         self.history.underlying_buffer_mut().fill(0.0);
@@ -336,6 +366,11 @@ impl<const CHANNELS: usize> ParticulaEngine<CHANNELS> {
     /// risk of blocking the audio thread).
     pub fn set_spawn_notifier(&mut self, tx: Sender<SpawnEvent>) {
         self.spawn_notifier = Some(tx);
+    }
+
+    /// Current history capacity in samples (tests / debug).
+    pub fn history_capacity_for_test(&self) -> usize {
+        self.history.capacity()
     }
 
     /// Clears the pool and the spawn sequence (keeps history).
@@ -491,7 +526,27 @@ impl<const CHANNELS: usize> Effect<CHANNELS> for ParticulaEngine<CHANNELS> {
             self.clear_all();
         }
 
-        // 0b. Master bypass: straight passthrough, leave the buffer untouched.
+        // 0b. History length: beats (BPM grid on) or ms; rebuilds the delay
+        //     line when the target capacity changes, keeping the freshest tail.
+        let tempo = infos
+            .tempo
+            .filter(|t| *t > 0.0 && infos.trustable)
+            .unwrap_or(self.fallback_bpm);
+        let hist_target = if self.spawn_sync {
+            (self.history_len_beats.max(0.03125) * 60.0 / tempo.max(1.0)
+                * sample_rate as f32) as usize
+        } else {
+            (self.history_len_ms * sample_rate as f32 / 1000.0) as usize
+        };
+        let hist_target = hist_target
+            .max(256)
+            .next_power_of_two()
+            .min(1 << 18);
+        if hist_target != self.history.capacity() {
+            self.resize_history(hist_target);
+        }
+
+        // 0c. Master bypass: straight passthrough, leave the buffer untouched.
         if !self.enabled {
             return;
         }
