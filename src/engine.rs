@@ -210,6 +210,12 @@ pub struct ParticulaEngine<const CHANNELS: usize = 1> {
     next_spawn_beat: f32,
     #[skip]
     was_playing: bool,
+    /// Whether the beat phase currently comes from the host (current_beat_number)
+    /// or the internal counter; used to detect mid-song playhead jumps.
+    #[skip]
+    use_host_phase: bool,
+    #[skip]
+    prev_beat: f32,
     #[skip]
     texture: Texture,
     #[skip]
@@ -312,6 +318,8 @@ impl<const CHANNELS: usize> ParticulaEngine<CHANNELS> {
             bpm: BpmSyncer::new(sample_rate.max(1)),
             next_spawn_beat: 0.25,
             was_playing: false,
+            use_host_phase: false,
+            prev_beat: 0.0,
             texture: Texture::new(
                 (0.085 * sample_rate as f32) as usize,
                 sample_rate.max(1),
@@ -604,30 +612,38 @@ impl<const CHANNELS: usize> Effect<CHANNELS> for ParticulaEngine<CHANNELS> {
         // 3. spawn scheduling: beat-quantized when spawn_sync, otherwise a
         //    free-running millisecond interval (Architecture.md sec.6/7).
         //
-        // Beat position: prefer the host's `current_beat_number` (already in
-        // beats) when trusted and present — it stays accurate across bars and
-        // transport seeks — and fall back to the internal beat counter.
-        let beat_now = if infos.trustable {
-            match infos.current_beat_number {
-                Some(cbn) => cbn,
-                None => self.bpm.read(),
-            }
+        // Beat position (two-layer detection):
+        //  layer 1 — transport says playing AND the host reports a beat number:
+        //    use it; otherwise (paused, or no host beat) fall back to the
+        //    internal BPM counter. A paused transport leaves current_beat_number
+        //    frozen, but the user may still be writing/previewing, so the cloud
+        //    keeps running on the internal grid there.
+        //  layer 2 — while on the host path, a fast forward/backward jump of
+        //    the playhead (mid-song seek) realigns `next_spawn_beat` to the
+        //    next grid point after the playhead; no burst, no stale targets.
+        let interval = self.spawn_interval_beats.max(0.03125);
+        let use_host = infos.playing
+            && infos.trustable
+            && infos.current_beat_number.is_some();
+        let beat_now = if use_host {
+            infos.current_beat_number.unwrap_or(self.bpm.read())
         } else {
             self.bpm.read()
         };
+        let switched = use_host != self.use_host_phase
+            || (self.prev_beat - beat_now).abs() > interval * 2.0 + 0.001;
+        self.use_host_phase = use_host;
+        self.prev_beat = beat_now;
         let spawn_due = if self.spawn_sync {
-            let interval = self.spawn_interval_beats.max(0.03125);
+            if switched {
+                // Realign to the grid point after the playhead (may be in the
+                // future after a forward seek — nothing fires until it lands).
+                self.next_spawn_beat =
+                    (beat_now / interval).floor() * interval + interval;
+            }
             let due = beat_now >= self.next_spawn_beat;
             if due {
-                // current_beat_number can jump in from mid-song (transport
-                // playhead), so never chase it beat-by-beat from 0 — realign
-                // to the next grid point after the playhead instead.
-                if beat_now > self.next_spawn_beat + interval * 2.0 {
-                    self.next_spawn_beat =
-                        (beat_now / interval).floor() * interval + interval;
-                } else {
-                    self.next_spawn_beat += interval;
-                }
+                self.next_spawn_beat += interval;
             }
             due
         } else {

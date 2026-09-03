@@ -42,6 +42,17 @@ impl BeatCtx {
         infos.current_beat_number = Some(beat);
         Self { infos }
     }
+    /// Paused transport: current_beat_number is frozen, but the internal
+    /// BPM counter keeps running (writing/previewing while paused).
+    fn paused(beat: f32) -> Self {
+        let mut infos = ProcessInfos::default();
+        infos.sample_rate = SR;
+        infos.tempo = Some(120.0);
+        infos.playing = false;
+        infos.trustable = true;
+        infos.current_beat_number = Some(beat);
+        Self { infos }
+    }
 }
 impl ProcessContext for BeatCtx {
     fn infos(&self) -> &ProcessInfos { &self.infos }
@@ -158,9 +169,9 @@ fn beat_sync_mode_spawns_continuously_on_the_grid() {
 #[test]
 fn host_beat_number_drives_the_grid() {
     // Static host beat position: 12.4 = the user pressed play mid-song
-    // (beat 12.4, not 0). The engine must use the host position directly and
-    // NOT chase it beat-by-beat from 0: one spawn at the playhead, then a
-    // realign to the next grid point (12.5) and silence — no spawn burst.
+    // (beat 12.4, not 0). The engine realigns `next` to the grid point after
+    // the playhead (12.5) and stays quiet until the playhead actually lands
+    // there — no spawn burst, no chasing from beat 0.
     let mut e = ParticulaEngine::<1>::new(4096, SR, 44);
     e.spawn_sync = true;
     e.spawn_interval_beats = 0.25;
@@ -168,10 +179,30 @@ fn host_beat_number_drives_the_grid() {
     e.texture_blend = 0.0;
     let mut ctx: Box<dyn ProcessContext> = Box::new(BeatCtx::new(12.4));
     let times = run_track(&mut e, &mut ctx, 4096);
-    assert_eq!(
-        times.len(),
-        1,
-        "mid-song resume must not burst-spawn, got {}",
+    assert!(
+        times.is_empty(),
+        "static mid-song playhead must stay on the future grid, got {}",
+        times.len()
+    );
+}
+
+#[test]
+fn paused_transport_falls_back_to_bpm_counter() {
+    // Transport paused with a frozen beat number: the engine must ignore the
+    // frozen host value and keep spawning on the internal BPM grid (the user
+    // is still writing/previewing, so the cloud stays alive and on-grid).
+    let mut e = ParticulaEngine::<1>::new(4096, SR, 45);
+    e.spawn_sync = true;
+    e.spawn_interval_beats = 0.25;
+    e.max_particles = 256.0;
+    e.texture_blend = 0.0;
+    let mut ctx: Box<dyn ProcessContext> = Box::new(BeatCtx::paused(12.4));
+    let times = run_track(&mut e, &mut ctx, 5 * SR);
+    assert!(!times.is_empty(), "paused transport must still spawn on the bpm grid");
+    // 5 s at 120 BPM with 0.25-beat interval ≈ 40 spawns.
+    assert!(
+        times.len() > 30,
+        "paused grid spawn count looks low: {}",
         times.len()
     );
 }
