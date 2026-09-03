@@ -161,17 +161,17 @@ enum DomainScale {
 
 /// Bipolar (can be negative) parameters that use the atanh scale.
 const TANH_PARAMS: &[&str] = &["freq_shift_min", "freq_shift_max"];
-/// Normalizer for the atanh scale (the parameter range max).
+/// Normalizer for the tanh scale (the parameter range max).
 const TANH_SCALE: f32 = 5000.0;
 
 /// Maps (min, max, value) to a slider domain. Log parameters work in
 /// ln(domain) (zero-min ranges use an epsilon floor); bipolar frequency
-/// shifts work in atanh(v / scale) so the 0 region stays fine-grained.
+/// shifts use forward tanh(v / scale): the derivative peaks at v = 0, so the
+/// slider's mid stretch (and fine control) sits right around zero.
 fn slider_domain(id: &str, min: f32, max: f32, value: f32) -> (f32, f32, f32, DomainScale) {
     if TANH_PARAMS.contains(&id) {
-        let x = |v: f32| (v / TANH_SCALE).clamp(-0.9999, 0.9999);
-        let at = |v: f32| x(v).atanh();
-        (at(min), at(max), at(value), DomainScale::Tanh { scale: TANH_SCALE })
+        let fwd = |v: f32| (v / TANH_SCALE).tanh();
+        (fwd(min), fwd(max), fwd(value), DomainScale::Tanh { scale: TANH_SCALE })
     } else if log_param(id) {
         let safe_min = if min > 0.0 { min } else { 1e-3 };
         let safe_max = max.max(safe_min * 2.0);
@@ -187,7 +187,9 @@ fn domain_to_value(scale: DomainScale, v: f32) -> f32 {
     match scale {
         DomainScale::Linear => v,
         DomainScale::Log => v.exp(),
-        DomainScale::Tanh { scale: s } => (s * v.tanh()).clamp(-s, s),
+        DomainScale::Tanh { scale: s } => {
+            (s * v.atanh()).clamp(-s, s)
+        }
     }
 }
 
@@ -1271,9 +1273,9 @@ fn random_targets(map: &ParamMap) -> Vec<(String, f32)> {
                 match scale {
                     DomainScale::Log => lo * (hi / lo).powf(rng.next_f32()),
                     DomainScale::Tanh { scale: s } => {
-                        let (a, b) = ((lo / s).clamp(-0.9999, 0.9999).atanh(),
-                                      (hi / s).clamp(-0.9999, 0.9999).atanh());
-                        s * (a + (b - a) * rng.next_f32()).tanh()
+                        let a = (lo / s).tanh();
+                        let b = (hi / s).tanh();
+                        (s * (a + (b - a) * rng.next_f32()).atanh()).clamp(-s, s)
                     }
                     DomainScale::Linear => rng.range(lo, hi),
                 }
