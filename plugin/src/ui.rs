@@ -148,16 +148,46 @@ fn log_param(id: &str) -> bool {
     LOG_PARAMS.contains(&id)
 }
 
+/// Slider scale selection.
+#[derive(Clone, Copy)]
+enum DomainScale {
+    Linear,
+    Log,
+    /// Symmetric hyperbolic scale around 0 (atanh), for bipolar params like
+    /// the frequency shift: low magnitudes get fine control, big shifts are
+    /// compressed.
+    Tanh { scale: f32 },
+}
+
+/// Bipolar (can be negative) parameters that use the atanh scale.
+const TANH_PARAMS: &[&str] = &["freq_shift_min", "freq_shift_max"];
+/// Normalizer for the atanh scale (the parameter range max).
+const TANH_SCALE: f32 = 5000.0;
+
 /// Maps (min, max, value) to a slider domain. Log parameters work in
-/// ln(domain); zero-min ranges use a tiny epsilon floor so 0 stays reachable.
-fn slider_domain(id: &str, min: f32, max: f32, value: f32) -> (f32, f32, f32, bool) {
-    if log_param(id) {
+/// ln(domain) (zero-min ranges use an epsilon floor); bipolar frequency
+/// shifts work in atanh(v / scale) so the 0 region stays fine-grained.
+fn slider_domain(id: &str, min: f32, max: f32, value: f32) -> (f32, f32, f32, DomainScale) {
+    if TANH_PARAMS.contains(&id) {
+        let x = |v: f32| (v / TANH_SCALE).clamp(-0.9999, 0.9999);
+        let at = |v: f32| x(v).atanh();
+        (at(min), at(max), at(value), DomainScale::Tanh { scale: TANH_SCALE })
+    } else if log_param(id) {
         let safe_min = if min > 0.0 { min } else { 1e-3 };
         let safe_max = max.max(safe_min * 2.0);
         let v = value.clamp(safe_min, safe_max);
-        (safe_min.ln(), safe_max.ln(), v.ln(), true)
+        (safe_min.ln(), safe_max.ln(), v.ln(), DomainScale::Log)
     } else {
-        (min, max, value.clamp(min, max), false)
+        (min, max, value.clamp(min, max), DomainScale::Linear)
+    }
+}
+
+/// Writes a slider-domain position back to a real parameter value.
+fn domain_to_value(scale: DomainScale, v: f32) -> f32 {
+    match scale {
+        DomainScale::Linear => v,
+        DomainScale::Log => v.exp(),
+        DomainScale::Tanh { scale: s } => (s * v.tanh()).clamp(-s, s),
     }
 }
 
@@ -834,9 +864,9 @@ impl ParticulaView {
             return iced::widget::space().into();
         };
         let map = self.param_map.clone();
-        let (lo, hi, disp, log_scale) = slider_domain(id, s.min, s.max, s.value);
+        let (lo, hi, disp, scale) = slider_domain(id, s.min, s.max, s.value);
         slider(lo..=hi, disp, move |v| {
-            let value = if log_scale { v.exp() } else { v };
+            let value = domain_to_value(scale, v);
             map.set(id, value, std::sync::atomic::Ordering::Relaxed);
             ParticulaMessage::Tick
         })
@@ -1014,7 +1044,7 @@ impl ParticulaView {
         };
         // Logarithmic scale for time/freq/stretch/pitch params: the slider
         // works on ln(value), writes are un-logged back to the real value.
-        let (lo, hi, disp, log_scale) = slider_domain(id, snap.min, snap.max, snap.value);
+        let (lo, hi, disp, scale) = slider_domain(id, snap.min, snap.max, snap.value);
         container(
             row![
                 iced::widget::mouse_area(
@@ -1026,7 +1056,7 @@ impl ParticulaView {
                 )
                 .on_double_click(ParticulaMessage::ParamReset { id }),
                 slider(lo..=hi, disp, move |v| {
-                    let value = if log_scale { v.exp() } else { v };
+                    let value = domain_to_value(scale, v);
                     ParticulaMessage::Param { id, value }
                 })
                 .step(nice_step(lo, hi))
@@ -1237,12 +1267,15 @@ fn random_targets(map: &ParamMap) -> Vec<(String, f32)> {
         let value = match &*av {
             AtomicValue::Float { range, .. } => {
                 let (lo, hi) = (*range.start(), *range.end());
-                // Log-uniform whenever the slider itself is log-scaled
-                // (LOG_PARAMS), regardless of the engine's derive metadata.
-                if log_param(&id) && lo > 0.0 {
-                    lo * (hi / lo).powf(rng.next_f32())
-                } else {
-                    rng.range(lo, hi)
+                let (_, _, _, scale) = slider_domain(&id, lo, hi, lo);
+                match scale {
+                    DomainScale::Log => lo * (hi / lo).powf(rng.next_f32()),
+                    DomainScale::Tanh { scale: s } => {
+                        let (a, b) = ((lo / s).clamp(-0.9999, 0.9999).atanh(),
+                                      (hi / s).clamp(-0.9999, 0.9999).atanh());
+                        s * (a + (b - a) * rng.next_f32()).tanh()
+                    }
+                    DomainScale::Linear => rng.range(lo, hi),
                 }
             }
             AtomicValue::Int { range, .. } => {
