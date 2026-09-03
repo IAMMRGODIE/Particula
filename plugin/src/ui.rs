@@ -172,7 +172,7 @@ fn cond_matches(cond: u8, mode: usize, sync_on: bool, host_known: bool) -> bool 
         14 => mode == 3 && !sync_on,
         15 => mode == 3 && sync_on,
         // Fallback BPM: only meaningful while the host reports no BPM/beats.
-        16 => host_known,
+        16 => !host_known,
         _ => false,
     }
 }
