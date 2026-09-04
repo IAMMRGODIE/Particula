@@ -1,4 +1,7 @@
-#![cfg(feature = "probe")]
+//! Headless CLAP probe for Particula (requires the optional \"probe\" feature /
+//! the clack-host crate). Without the feature this example prints a hint.
+//!
+//! Run: cargo run --release -p particula_plugin --features probe --example clap_probe -- <path-to-clap>
 
 //! Headless CLAP probe for Particula (requires the vendored clack host).
 //!
@@ -128,4 +131,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!("RESULT: output <~ input -> wet path silent in the CLAP context.");
     }
     Ok(())
+}
+
+#[cfg(not(feature = "probe"))]
+fn main() {
+    eprintln!("clap_probe needs the \"probe\" feature: cargo run -p particula_plugin --features probe --example clap_probe");
 }
