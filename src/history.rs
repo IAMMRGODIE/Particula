@@ -27,14 +27,44 @@ pub fn add_at(history: &mut RingBuffer<f32>, delay_samples: usize, value: f32) {
 /// 1 = freshest). The particle hot loop uses this instead of the library's
 /// cubic `WaveTable::sample` — with 128+ voices the extra two reads and the
 /// cubic weights per sample per particle are measurable.
-pub fn read_linear(history: &RingBuffer<f32>, t: f32) -> f32 {
+/// Cubic (Catmull-Rom) history read. `t` is a continuous read-head position:
+/// distance in units of freshest (0 = freshest), it may exceed [0,1] freely —
+/// the physical ring wraps, so a reverse head loops back into older material
+/// without boundary clicks or discontinuities.
+pub fn read_cubic(history: &RingBuffer<f32>, t: f32) -> f32 {
     let cap = history.capacity();
     if cap == 0 {
         return 0.0;
     }
-    // The particle drives t as a continuous read-head distance now (no
-    // rem_euclid wrap): outside the buffered span there is simply no material.
-    if !(0.0..=1.0).contains(&t) {
+    debug_assert!(cap.is_power_of_two());
+    let mask = cap - 1;
+    let freshest = (history.current_pos() + mask) & mask;
+    let x = t * (cap - 1) as f32;
+    let pos = freshest as f32 - x;
+    let ii = pos.floor();
+    let frac = pos - ii;
+    let nm = (ii as i64).rem_euclid(cap as i64) as usize;
+    let buf = history.underlying_buffer();
+    let n0 = (nm + mask) & mask;
+    let n1 = nm;
+    let n2 = (nm + 1) & mask;
+    let n3 = (nm + 2) & mask;
+    let a = buf[n0];
+    let b = buf[n1];
+    let c = buf[n2];
+    let d = buf[n3];
+    let f = frac;
+    // Catmull-Rom:
+    // 0.5 * (2b + (-a+c)f + (2a-5b+4c-d)f^2 + (-a+3b-3c+d)f^3)
+    0.5 * ((2.0 * b)
+        + (-a + c) * f
+        + (2.0 * a - 5.0 * b + 4.0 * c - d) * f * f
+        + (-a + 3.0 * b - 3.0 * c + d) * f * f * f)
+}
+
+pub fn read_linear(history: &RingBuffer<f32>, t: f32) -> f32 {
+    let cap = history.capacity();
+    if cap == 0 {
         return 0.0;
     }
     // History capacity is a power of two (1 << 16), so a mask does the

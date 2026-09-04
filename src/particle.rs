@@ -8,7 +8,7 @@ use i_am_dsp::{
 };
 
 use crate::{
-    history::{add_at, read_linear},
+    history::{add_at, read_cubic},
     position_mod::PositionMod,
     rng::SplitMix64,
     texture::Texture,
@@ -189,16 +189,10 @@ impl Particle {
         self.drift += (1.0 - self.playback_rate) / cap1;
         self.position = smoothed + self.drift;
 
-        // Edge fade: when the continuous read head approaches either end of
-        // the buffered span (reverse exhaustion, slow-forward, fast-forward
-        // past freshest), ramp the voice down over ~5 ms instead of cutting to
-        // zero — removes the boundary clicks.
-        let dist = self.position * cap1;
-        let remain = dist.min(cap1 - dist);
-        let fade = (remain / (0.005 * (1.0 / dt))).min(1.0).max(0.0);
-        let mut s = (read_linear(history, self.position) * (1.0 - texture_blend)
-            + texture.sample_linear(self.position) * texture_blend)
-            * fade;
+        // Cubic reads with physical-ring wrap: the head loops back into
+        // older/newer material at the span edges (no boundary clicks).
+        let mut s = read_cubic(history, self.position) * (1.0 - texture_blend)
+            + texture.sample(self.position) * texture_blend;
 
         // Envelope: linear attack, then exponential decay.
         if self.attack_elapsed < self.attack_samples {
