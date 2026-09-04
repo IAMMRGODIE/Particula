@@ -177,8 +177,14 @@ impl Particle {
         self.smoothed += self.smooth_a * (target - self.smoothed);
         let smoothed = self.smoothed;
 
-        // Pitch drift on top; read position stays in [0, 1).
-        self.drift += self.playback_rate / history.capacity() as f32;
+        // Pitch drift, push-aware: the delay line advances one sample per
+        // frame, so keeping a constant distance from the freshest sample means
+        // Δt = (1 - rate) / (cap - 1): rate 1 stays put (delayed playback at
+        // original pitch), rate -1 drifts the read head absolutely backwards
+        // at original pitch instead of +2 (the old rate/cap formula ran
+        // reverse voices *forward* at double speed — pitch up an octave).
+        let cap1 = (history.capacity() - 1).max(1) as f32;
+        self.drift += (1.0 - self.playback_rate) / cap1;
         self.position = (smoothed + self.drift).rem_euclid(1.0);
 
         let mut s = read_linear(history, self.position) * (1.0 - texture_blend)

@@ -31,6 +31,7 @@ fn track_positions(rate: f32, frames: usize) -> Vec<f32> {
     let mut ctx: Box<dyn ProcessContext> = Box::new(());
     let mut out = Vec::with_capacity(frames);
     for i in 0..frames {
+        history.push(1.0); // mimic the real engine: the line advances 1/frame
         out.push(particle.position);
         particle.process(
             &mut history,
@@ -49,11 +50,14 @@ fn track_positions(rate: f32, frames: usize) -> Vec<f32> {
 }
 
 #[test]
-fn forward_rate_walks_towards_newer_history() {
+fn forward_rate_reads_at_constant_distance() {
     let pos = track_positions(1.0, 500);
-    // Fixed onset + positive rate: position increases by 1/cap per sample.
+    // Push-aware drift: rate 1 keeps t constant, i.e. the read head holds a
+    // constant distance from the freshest sample = delayed playback at the
+    // original pitch (not marching through the line).
     let step = pos[1] - pos[0];
-    assert!((step - 1.0 / 256.0).abs() < 1e-6, "forward step {step}");
+    assert!(step.abs() < 1e-5, "forward step {step} should be ~0");
+    assert!((pos[0] - 0.8).abs() < 1e-5, "starts at the onset");
 }
 
 #[test]
@@ -62,18 +66,20 @@ fn reverse_rate_walks_towards_older_history() {
     let mut wraps = 0;
     for w in pos.windows(2) {
         let diff = w[1] - w[0];
-        if diff > 0.5 {
-            // rem_euclid wrap from t ~ 0 to t ~ 1
+        if diff < -0.5 {
+            // rem_euclid wrap from t ~ 1 back to t ~ 0 (t keeps growing)
             wraps += 1;
         } else {
-            assert!(diff < 0.0, "reverse position must strictly decrease, got {diff}");
+            // Reverse: t grows by (1 - rate)/(cap-1) = 2/255 per frame, which
+            // pulls the read head absolutely backwards at original speed.
+            let expected = 2.0 / 255.0;
             assert!(
-                (diff + 1.0 / 256.0).abs() < 1e-6,
-                "reverse step {diff} should be -1/cap"
+                (diff - expected).abs() < 1e-6,
+                "reverse step {diff} should be +{expected}"
             );
         }
     }
-    assert!(wraps > 0, "500 samples at -1/256 must wrap several times");
+    assert!(wraps > 0, "500 samples at 2/255 must wrap at least once");
 }
 
 #[test]
