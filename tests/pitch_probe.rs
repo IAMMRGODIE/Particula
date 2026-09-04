@@ -24,10 +24,8 @@ fn freq(rate: f32) -> f32 {
     for i in 0..to {
         history.push((TAU * F0 * i as f32 / SR as f32).sin());
         let s = p.process(&mut history, &texture, 0.0, 1.0 / SR as f32, i, 0.5, 0, 1.0, &mut rng, &mut ctx).unwrap_or(0.0);
-        if i >= from {
-            if prev <= 0.0 && s > 0.0 {
-                zc += 1;
-            }
+        if i >= from && prev <= 0.0 && s > 0.0 {
+            zc += 1;
         }
         prev = s;
     }
