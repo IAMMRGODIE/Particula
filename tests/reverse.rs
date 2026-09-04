@@ -63,23 +63,23 @@ fn forward_rate_reads_at_constant_distance() {
 #[test]
 fn reverse_rate_walks_towards_older_history() {
     let pos = track_positions(-1.0, 500);
-    let mut wraps = 0;
+    // Reverse reads are a continuous read-head distance: t grows by
+    // (1 - rate)/(cap-1) = 2/255 per frame — absolute sample speed -1
+    // (original pitch, backwards) with no rem wrap jumps.
     for w in pos.windows(2) {
         let diff = w[1] - w[0];
-        if diff < -0.5 {
-            // rem_euclid wrap from t ~ 1 back to t ~ 0 (t keeps growing)
-            wraps += 1;
-        } else {
-            // Reverse: t grows by (1 - rate)/(cap-1) = 2/255 per frame, which
-            // pulls the read head absolutely backwards at original speed.
-            let expected = 2.0 / 255.0;
-            assert!(
-                (diff - expected).abs() < 1e-6,
-                "reverse step {diff} should be +{expected}"
-            );
-        }
+        let expected = 2.0 / 255.0;
+        assert!(
+            (diff - expected).abs() < 1e-6,
+            "reverse step {diff} should be +{expected}"
+        );
     }
-    assert!(wraps > 0, "500 samples at 2/255 must wrap at least once");
+    // The head drifts past the buffered span and must not wrap back: it
+    // eventually exceeds 1.0 (read silence), never snaps toward 0.
+    assert!(
+        pos[0] < pos[1] && pos[1] < pos[490],
+        "reverse t should keep growing monotonically"
+    );
 }
 
 #[test]

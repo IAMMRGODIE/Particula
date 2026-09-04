@@ -77,8 +77,8 @@ fn dc_input_reads_position_and_envelope() {
     e.base_position = 0.25;
     e.position_step = 0.0;
     e.position_jitter = 0.0;
-    e.pitch_min = 0.0;
-    e.pitch_max = 0.0; // no drift
+    e.pitch_min = 1.0;
+    e.pitch_max = 1.0; // unit rate: reads a fixed distance (no drift)
     e.freq_shift_min = 0.0;
     e.freq_shift_max = 0.0;
     e.initial_gain = 0.5;
@@ -119,8 +119,8 @@ fn single_particle_dies_and_output_goes_silent() {
     e.position_mode = 0;
     e.base_position = 0.75; // near the freshest end: readable soon after fill
     e.position_jitter = 0.0;
-    e.pitch_min = 0.0;
-    e.pitch_max = 0.0;
+    e.pitch_min = 1.0;
+    e.pitch_max = 1.0;
     e.freq_shift_min = 0.0;
     e.freq_shift_max = 0.0;
     e.initial_gain = 1.0;

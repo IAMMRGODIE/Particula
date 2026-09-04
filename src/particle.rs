@@ -173,7 +173,9 @@ impl Particle {
         } else {
             self.onset
         };
-        let target = (base + offset).clamp(0.0, 1.0);
+        // Continuous read-head distance (no wrap): reverse voices drift past
+        // the buffered span and read silence instead of aliasing/jumping.
+        let target = base + offset;
         self.smoothed += self.smooth_a * (target - self.smoothed);
         let smoothed = self.smoothed;
 
@@ -185,7 +187,7 @@ impl Particle {
         // reverse voices *forward* at double speed — pitch up an octave).
         let cap1 = (history.capacity() - 1).max(1) as f32;
         self.drift += (1.0 - self.playback_rate) / cap1;
-        self.position = (smoothed + self.drift).rem_euclid(1.0);
+        self.position = smoothed + self.drift;
 
         let mut s = read_linear(history, self.position) * (1.0 - texture_blend)
             + texture.sample_linear(self.position) * texture_blend;

@@ -35,8 +35,8 @@ fn pan_pinned(seed: u64, pan: f32) -> ParticulaEngine<2> {
     e.position_mode = 0;
     e.base_position = 0.9;
     e.position_jitter = 0.0;
-    e.pitch_min = 0.0;
-    e.pitch_max = 0.0;
+    e.pitch_min = 1.0;
+    e.pitch_max = 1.0;
     e.freq_shift_min = 0.0;
     e.freq_shift_max = 0.0;
     e.initial_gain = 0.8;

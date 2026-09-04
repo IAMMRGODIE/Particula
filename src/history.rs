@@ -32,6 +32,11 @@ pub fn read_linear(history: &RingBuffer<f32>, t: f32) -> f32 {
     if cap == 0 {
         return 0.0;
     }
+    // The particle drives t as a continuous read-head distance now (no
+    // rem_euclid wrap): outside the buffered span there is simply no material.
+    if !(0.0..=1.0).contains(&t) {
+        return 0.0;
+    }
     // History capacity is a power of two (1 << 16), so a mask does the
     // wrap-around branch-free — a per-sample `rem_euclid` here showed up
     // badly at 300+ voices.
@@ -45,7 +50,11 @@ pub fn read_linear(history: &RingBuffer<f32>, t: f32) -> f32 {
     let i0 = i0 as usize;
     let i1 = (i0 + 1) & mask;
     let frac = slot_f - f0;
-    history[i0] + (history[i1] - history[i0]) * frac
+    // Physical access: RingBuffer's Index is relative to current_pos, which
+    // would double-count the freshest advance and pitch everything up an
+    // octave. `slot_f` is already a physical index.
+    let buf = history.underlying_buffer();
+    buf[i0] + (buf[i1] - buf[i0]) * frac
 }
 
 /// t-space position (0 = oldest, 1 = freshest) of the loudest sample in the
