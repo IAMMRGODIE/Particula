@@ -14,6 +14,10 @@ i_am_dsp_iced = { path = "../../i_am_dsp/i_am_dsp_iced" }
 i_am_plugin = { path = "../../i_am_dsp/i_am_plugin" }
 iced = { version = "0.14.0", features = ["canvas", "advanced"] }
 crossbeam-channel = "0.5.16"
+clack-host = { version = "0.1.1", optional = true }
 
-[dev-dependencies]
-clack-host = { path = "../../clack/host" }
+[features]
+# Optional headless CLAP probe: requires the vendored clack host
+# (C:\projects\dsp\clack). Enable once it exists again:
+#   cargo run -p particula_plugin --features probe --example clap_probe
+probe = ["dep:clack-host"]

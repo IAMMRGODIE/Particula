@@ -654,9 +654,13 @@ impl<const CHANNELS: usize> Effect<CHANNELS> for ParticulaEngine<CHANNELS> {
         };
         self.bpm.next_k(tempo, 1);
         if infos.playing && !self.was_playing {
-            // Transport restart: re-align the beat phase to 0.
+            // Transport restart: a fresh timeline — re-align the beat phase
+            // and wipe the delay line/particles so the cloud rebuilds from
+            // the (possibly different) source position without smearing the
+            // previous section across the feedback path.
             self.bpm.reset();
             self.next_spawn_beat = self.spawn_interval_beats.max(0.03125);
+            self.clear_all();
         }
         self.was_playing = infos.playing;
 
@@ -681,10 +685,15 @@ impl<const CHANNELS: usize> Effect<CHANNELS> for ParticulaEngine<CHANNELS> {
         } else {
             self.bpm.read()
         };
-        let switched = use_host != self.use_host_phase
-            || (self.prev_beat - beat_now).abs() > interval * 2.0 + 0.001;
+        let jumped = (self.prev_beat - beat_now).abs() > interval * 2.0 + 0.001;
+        let switched = use_host != self.use_host_phase || jumped;
         self.use_host_phase = use_host;
         self.prev_beat = beat_now;
+        // Mid-song seek (playhead jump while playing): wipe the history and
+        // voices so feedback never mixes two timeline positions.
+        if jumped {
+            self.clear_all();
+        }
         let spawn_due = if self.spawn_sync {
             if switched {
                 // Realign to the grid point after the playhead (may be in the

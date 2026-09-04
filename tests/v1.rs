@@ -98,12 +98,15 @@ fn feedback_changes_output_and_stays_bounded() {
     on.wet = 1.0;
     on.texture_blend = 0.0; // isolate the feedback path
     on.feedback_gain = 0.7;
-    // Keep the injection point inside the particles' read region
-    // (base 0.9 ± jitter): delay 8 ms -> h = 4095 - 384 = 3711, well inside.
-    on.feedback_delay_ms = 8.0;
+    // Deterministic overlap: pitch 1 pins the head at base 0.9 (reads the
+    // 0.9 * cap ring offset); inject the feedback at the same distance
+    // (~0.9 * 4095 = 3685 samples ~= 77 ms) so it is read back every sample.
+    on.pitch_min = 1.0;
+    on.pitch_max = 1.0;
+    on.feedback_delay_ms = 77.0;
     on.feedback_damping_hz = 4000.0;
     on.base_position = 0.9;
-    on.position_jitter = 0.08;
+    on.position_jitter = 0.0;
     on.lifetime_ms_min = 150.0;
     on.lifetime_ms_max = 600.0;
     let out_on = run(&mut on, &input);

@@ -1,4 +1,6 @@
-//! Headless CLAP probe for Particula.
+#![cfg(feature = "probe")]
+
+//! Headless CLAP probe for Particula (requires the vendored clack host).
 //!
 //! Loads the built plugin, feeds a known stereo signal through the Main
 //! stereo in/out for ~2.5 s, and reports whether the wet path produces any
