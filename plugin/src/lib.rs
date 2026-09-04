@@ -72,6 +72,15 @@ impl ParticulaProcessor {
         }
     }
 
+    /// Sets the engine panic latch (wipes history + texture + particles).
+    /// Shared by CLAP reset / stop-processing and the GUI PANIC button.
+    fn fire_panic(&mut self) {
+        self.engine
+            .value
+            .panic_flag()
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
     fn refresh_stats(&self) {
         let sc = self.engine.value.sample_count();
         if sc & 0b1111111111 == 0 {
@@ -143,6 +152,7 @@ impl Processor for ParticulaProcessor {
             self.shoot.clone(),
         )
     }
+
 }
 
 impl Plugin for ParticulaProcessor {
@@ -163,15 +173,19 @@ impl Plugin for ParticulaProcessor {
         self.engine.param_map()
     }
 
-    /// Host stopped processing (pause / transport stop / unload): equivalent
-    /// to pressing PANIC — wipe history + texture + particles so the cloud
+    /// CLAP reset: clear every piece of intermediate state (delay line,
+    /// texture, particles) but keep parameter values untouched. That is exactly
+    /// what the PANIC latch does, so both hook into it.
+    fn on_reset(&mut self) {
+        self.fire_panic();
+    }
+
+    /// Host stopped processing (pause / transport stop / unload): the cloud
     /// starts from a clean slate the next time processing resumes.
     fn on_stop_processing(&mut self) {
-        self.engine
-            .value
-            .panic_flag()
-            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.fire_panic();
     }
+
 
     // Crimson Text (OFL, free for commercial use) embedded so the GUI can use
     // it as the display serif without depending on the host system fonts.
