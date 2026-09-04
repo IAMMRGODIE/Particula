@@ -12,11 +12,14 @@
 //!
 //! Run: cargo run --release -p particula_plugin --example clap_probe -- <path-to-clap-or-dll>
 
-use clack_host::factory::plugin::PluginFactory;
-use clack_host::prelude::*;
-use std::error::Error;
 
-struct ProbeHost;
+#[cfg(feature = "probe")]
+mod imp {
+    use clack_host::factory::plugin::PluginFactory;
+    use clack_host::prelude::*;
+    use std::error::Error;
+
+    struct ProbeHost;
 impl HostHandlers for ProbeHost {
     type Shared<'a> = ();
     type MainThread<'a> = ();
@@ -28,7 +31,7 @@ const SR: f64 = 48_000.0;
 const FRAMES: usize = 2_048;
 const BLOCKS: usize = 60; // ~2.5 s
 
-fn main() -> Result<(), Box<dyn Error>> {
+pub fn main_body() -> Result<(), Box<dyn Error>> {
     let path = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "target/release/Particula.clap".to_string());
@@ -131,6 +134,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!("RESULT: output <~ input -> wet path silent in the CLAP context.");
     }
     Ok(())
+}
+
+}
+
+#[cfg(feature = "probe")]
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    imp::main_body()
 }
 
 #[cfg(not(feature = "probe"))]
