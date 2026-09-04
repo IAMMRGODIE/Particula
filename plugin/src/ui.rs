@@ -1230,7 +1230,7 @@ const DEFAULTS: &[(&str, f32)] = &[
     ("lifetime_ms_min", 100.0),
     ("lifetime_ms_max", 1200.0),
     ("pitch_min", 0.5),
-    ("pitch_max", 1.5),
+    ("pitch_max", 2.0),
     ("freq_shift_min", -120.0),
     ("freq_shift_max", 120.0),
     ("position_smooth_ms", 20.0),

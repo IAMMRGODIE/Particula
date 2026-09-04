@@ -20,7 +20,7 @@
 
 右下角 RANDOMIZE 点一下就会随机所有参数，SHOOT 会立即发射 `(pool / 16.0).floor().max(1)` 个粒子，如果当前 Pool 是满的是没效果的. PANIC 会立即停止一切粒子. 
 
-另外 Pool 不建议开太大，因为卡（
+另外 Pool 以及 Material 里面的 Window 不建议开太大，因为卡（
 
 ## 安装
 
