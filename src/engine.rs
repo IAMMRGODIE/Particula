@@ -584,7 +584,9 @@ impl<const CHANNELS: usize> Effect<CHANNELS> for ParticulaEngine<CHANNELS> {
         _other: &[&[f32; CHANNELS]],
         ctx: &mut Box<dyn ProcessContext>,
     ) {
-        let infos = ctx.infos();
+        // Clone once per process() call: the ImmediateStop gate needs a
+        // mutable ctx (clear_events) while the rest of the frame reads infos.
+        let infos = ctx.infos().clone();
         let new_sr = if infos.trustable && infos.sample_rate != 0 {
             infos.sample_rate
         } else {
@@ -597,6 +599,13 @@ impl<const CHANNELS: usize> Effect<CHANNELS> for ParticulaEngine<CHANNELS> {
 
         // 0a. PANIC: consume the latch once per call and wipe history/particles.
         if self.panic_flag.swap(false, Ordering::Relaxed) {
+            self.clear_all();
+        }
+        // 0a2. DAW immediate-stop event (no MIDI port needed): same semantics
+        //      as the PANIC button — silence everything, then keep the gate
+        //      open in case the host keeps re-sending it while stopped.
+        if ctx.should_stop() {
+            ctx.clear_events();
             self.clear_all();
         }
         // Refreshes host tempo/beat availability for the GUI.
