@@ -1662,14 +1662,14 @@ impl<M> canvas::Program<M> for SigilCanvas {
         frame.stroke(&Path::circle(c, core_r), hairline(0.30));
         frame.fill(&Path::circle(c, 2.0), Color::from_rgba(1.0, 1.0, 1.0, 0.85));
 
-        // Split indicator (faint vertical divider between the click zones).
-        frame.stroke(
-            &Path::line(
-                iced::Point::new(c.x, c.y - max_r * 0.4),
-                iced::Point::new(c.x, c.y + max_r * 0.4),
-            ),
-            hairline(0.06),
-        );
+        // // Split indicator (faint vertical divider between the click zones).
+        // frame.stroke(
+        //     &Path::line(
+        //         iced::Point::new(c.x, c.y - max_r * 0.4),
+        //         iced::Point::new(c.x, c.y + max_r * 0.4),
+        //     ),
+        //     hairline(0.06),
+        // );
 
         vec![frame.into_geometry()]
     }
