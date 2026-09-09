@@ -455,6 +455,8 @@ pub struct ParticulaView {
     about_fade: f32,
     /// Dim cursor for the master off state (0 = lit, 1 = fully dimmed).
     off_dim: f32,
+    /// Spawn glow pulse: 1 when particles are born, eases to 0 (~0.45 s).
+    glow: f32,
 
     /// Randomize targets being eased into (id, target) on each tick.
     randomize_pending: Vec<(String, f32)>,
@@ -575,6 +577,7 @@ impl ParticulaView {
             about: false,
             about_fade: 0.0,
             off_dim: 0.0,
+            glow: 0.0,
             randomize_pending: Vec::new(),
             last_frame: None,
         }
@@ -653,8 +656,11 @@ impl ParticulaView {
                     lifetime: ev.lifetime_samples as f32 / sr,
                 };
                 self.next_dot += 1;
+                self.glow = 1.0;
             }
         }
+        // Spawn glow decay.
+        self.glow = (self.glow - dt / 0.45).max(0.0);
 
         // 2. Age the dots (keep them until the slot is reused by a new spawn).
         for ring in 0..RINGS {
@@ -744,6 +750,7 @@ impl ParticulaView {
                 phases: self.ring_phases,
                 bg_phase: self.bg_phase,
                 shift: self.centre_shift,
+                glow: self.glow,
             })
             .width(Length::Fill)
             .height(Length::Fill),
@@ -1525,6 +1532,8 @@ struct SigilCanvas {
     bg_phase: f32,
     /// Horizontal nudge applied to the pattern centre (px).
     shift: f32,
+    /// Spawn glow pulse (0..1): brightens the core and particle halos.
+    glow: f32,
 }
 
 impl<M> canvas::Program<M> for SigilCanvas {
@@ -1600,6 +1609,18 @@ impl<M> canvas::Program<M> for SigilCanvas {
                 let d = &self.dots[ring][slot];
                 let alpha = dot_alpha(d);
                 if alpha > 0.02 {
+                    // Halo layers make bright spawns read as glowing points.
+                    if alpha > 0.22 {
+                        let boost = 0.75 + 0.25 * self.glow;
+                        frame.fill(
+                            &Path::circle(dot_pos, 5.4),
+                            Color::from_rgba(1.0, 1.0, 1.0, alpha * 0.16 * boost),
+                        );
+                        frame.fill(
+                            &Path::circle(dot_pos, 9.0),
+                            Color::from_rgba(1.0, 1.0, 1.0, alpha * 0.06 * boost),
+                        );
+                    }
                     frame.fill(&Path::circle(dot_pos, 2.6), Color::from_rgba(1.0, 1.0, 1.0, alpha));
                 } else {
                     frame.fill(&Path::circle(dot_pos, 1.2), Color::from_rgba(1.0, 1.0, 1.0, 0.05));
@@ -1607,9 +1628,42 @@ impl<M> canvas::Program<M> for SigilCanvas {
             }
         }
 
-        // Centre: small ring + core dot.
-        frame.stroke(&Path::circle(c, max_r * 0.07), hairline(0.35));
-        frame.fill(&Path::circle(c, 2.0), Color::from_rgba(1.0, 1.0, 1.0, 0.9));
+        // Centre: breathing core glow (pulses brighter whenever particles
+        // are born) + small ring + core dot.
+        let pulse = 0.55 + 0.45 * self.glow;
+        let core_r = max_r * 0.07;
+        for (k, a) in [(4.2_f32, 0.030_f32), (2.6, 0.055), (1.6, 0.085)] {
+            frame.fill(
+                &Path::circle(c, core_r * k),
+                Color::from_rgba(1.0, 1.0, 1.0, a * pulse),
+            );
+        }
+        frame.stroke(&Path::circle(c, core_r), hairline(0.30 + 0.25 * self.glow));
+        frame.fill(
+            &Path::circle(c, 2.0 + 0.9 * self.glow),
+            Color::from_rgba(1.0, 1.0, 1.0, 0.55 + 0.45 * self.glow),
+        );
+
+        // Slow light sweep: a faint linear-gradient band drifting across the
+        // whole sigil (iced only offers linear gradients, so this is the
+        // cheapest way to get a moving highlight).
+        {
+            use iced::widget::canvas::gradient::Linear;
+            let ang = self.bg_phase * 0.5;
+            let (dx, dy) = (ang.cos(), ang.sin());
+            let half = (bounds.width + bounds.height) * 0.25;
+            let start = iced::Point::new(c.x - dx * half, c.y - dy * half);
+            let end = iced::Point::new(c.x + dx * half, c.y + dy * half);
+            let sweep = canvas::Gradient::Linear(
+                Linear::new(start, end)
+                    .add_stop(0.0, Color::TRANSPARENT)
+                    .add_stop(0.40, Color::TRANSPARENT)
+                    .add_stop(0.50, Color::from_rgba(1.0, 1.0, 1.0, 0.05))
+                    .add_stop(0.60, Color::TRANSPARENT)
+                    .add_stop(1.0, Color::TRANSPARENT),
+            );
+            frame.fill_rectangle(iced::Point::ORIGIN, bounds.size(), sweep);
+        }
 
         // Split indicator (faint vertical divider between the click zones).
         frame.stroke(
