@@ -1650,13 +1650,13 @@ impl<M> canvas::Program<M> for SigilCanvas {
 
         // Centre: a static radial-gradient glow (no pulsing), a small ring
         // and the core dot.
-        let glow_r = max_r * 0.52;
+        let glow_r = max_r * 1.20;
         frame.draw_image(
             iced::Rectangle::new(
                 iced::Point::new(c.x - glow_r, c.y - glow_r),
                 iced::Size::new(glow_r * 2.0, glow_r * 2.0),
             ),
-            iced::widget::canvas::Image::new(glow_sprite()).opacity(0.20_f32),
+            iced::widget::canvas::Image::new(glow_sprite()).opacity(0.08_f32),
         );
         let core_r = max_r * 0.07;
         frame.stroke(&Path::circle(c, core_r), hairline(0.30));
