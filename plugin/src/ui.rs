@@ -1628,41 +1628,29 @@ impl<M> canvas::Program<M> for SigilCanvas {
             }
         }
 
-        // Centre: breathing core glow (pulses brighter whenever particles
-        // are born) + small ring + core dot.
-        let pulse = 0.55 + 0.45 * self.glow;
+        // Centre: small ring + core dot (the dot breathes with spawns).
         let core_r = max_r * 0.07;
-        for (k, a) in [(4.2_f32, 0.030_f32), (2.6, 0.055), (1.6, 0.085)] {
-            frame.fill(
-                &Path::circle(c, core_r * k),
-                Color::from_rgba(1.0, 1.0, 1.0, a * pulse),
-            );
-        }
         frame.stroke(&Path::circle(c, core_r), hairline(0.30 + 0.25 * self.glow));
         frame.fill(
             &Path::circle(c, 2.0 + 0.9 * self.glow),
             Color::from_rgba(1.0, 1.0, 1.0, 0.55 + 0.45 * self.glow),
         );
 
-        // Slow light sweep: a faint linear-gradient band drifting across the
-        // whole sigil (iced only offers linear gradients, so this is the
-        // cheapest way to get a moving highlight).
+        // Soft overhead lamp: a fixed vertical gradient falling from the top
+        // edge (no rotation) — reads as gentle top light washing the sigil.
         {
             use iced::widget::canvas::gradient::Linear;
-            let ang = self.bg_phase * 0.5;
-            let (dx, dy) = (ang.cos(), ang.sin());
-            let half = (bounds.width + bounds.height) * 0.25;
-            let start = iced::Point::new(c.x - dx * half, c.y - dy * half);
-            let end = iced::Point::new(c.x + dx * half, c.y + dy * half);
-            let sweep = canvas::Gradient::Linear(
-                Linear::new(start, end)
-                    .add_stop(0.0, Color::TRANSPARENT)
-                    .add_stop(0.40, Color::TRANSPARENT)
-                    .add_stop(0.50, Color::from_rgba(1.0, 1.0, 1.0, 0.05))
-                    .add_stop(0.60, Color::TRANSPARENT)
-                    .add_stop(1.0, Color::TRANSPARENT),
+            let lamp = canvas::Gradient::Linear(
+                Linear::new(
+                    iced::Point::new(c.x, bounds.height * 0.0),
+                    iced::Point::new(c.x, bounds.height),
+                )
+                .add_stop(0.0, Color::from_rgba(1.0, 1.0, 1.0, 0.10))
+                .add_stop(0.30, Color::from_rgba(1.0, 1.0, 1.0, 0.035))
+                .add_stop(0.62, Color::TRANSPARENT)
+                .add_stop(1.0, Color::TRANSPARENT),
             );
-            frame.fill_rectangle(iced::Point::ORIGIN, bounds.size(), sweep);
+            frame.fill_rectangle(iced::Point::ORIGIN, bounds.size(), lamp);
         }
 
         // Split indicator (faint vertical divider between the click zones).
