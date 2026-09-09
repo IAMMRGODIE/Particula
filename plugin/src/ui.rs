@@ -1404,6 +1404,40 @@ fn page_button_style(active: bool) -> impl Fn(&iced::Theme, button::Status) -> b
     }
 }
 
+/// Approximated radial gradient: stacked concentric circles with *differential*
+/// alpha (drawn outside-in so the layers sum to peak * (1 - r/R)^2). iced 0.14
+/// exposes neither radial gradients nor mesh drawing, and its image feature
+/// pulls crates that are not available offline — 24-30 differential layers are
+/// visually indistinguishable from a smooth falloff at these radii.
+fn radial_glow(
+    frame: &mut canvas::Frame<iced::Renderer>,
+    center: iced::Point,
+    radius: f32,
+    peak: f32,
+    layers: usize,
+) {
+    if peak <= 0.002 || radius <= 0.5 {
+        return;
+    }
+    let target = |r: f32| {
+        let x = (1.0 - r / radius).max(0.0);
+        peak * x * x
+    };
+    let mut prev = 0.0_f32;
+    for i in (1..=layers).rev() {
+        let r = radius * (i as f32 / layers as f32).powf(0.8);
+        let cur = target(r);
+        let a = (cur - prev).max(0.0);
+        if a > 0.002 {
+            frame.fill(
+                &canvas::Path::circle(center, r),
+                Color::from_rgba(1.0, 1.0, 1.0, a),
+            );
+        }
+        prev = cur;
+    }
+}
+
 /// A faint chevron hinting the clickable half (fades out while the panel
 /// on that side is visible). Drawn as a canvas triangle, not an emoji.
 fn hint_arrow(edge: f32, alpha: f32, left: bool) -> Element<'static, ParticulaMessage> {
@@ -1609,17 +1643,10 @@ impl<M> canvas::Program<M> for SigilCanvas {
                 let d = &self.dots[ring][slot];
                 let alpha = dot_alpha(d);
                 if alpha > 0.02 {
-                    // Halo layers make bright spawns read as glowing points.
+                    // Radial-gradient halo sprite under bright spawns.
                     if alpha > 0.22 {
                         let boost = 0.75 + 0.25 * self.glow;
-                        frame.fill(
-                            &Path::circle(dot_pos, 5.4),
-                            Color::from_rgba(1.0, 1.0, 1.0, alpha * 0.16 * boost),
-                        );
-                        frame.fill(
-                            &Path::circle(dot_pos, 9.0),
-                            Color::from_rgba(1.0, 1.0, 1.0, alpha * 0.06 * boost),
-                        );
+                        radial_glow(&mut frame, dot_pos, 11.0, alpha * 0.5 * boost, 10);
                     }
                     frame.fill(&Path::circle(dot_pos, 2.6), Color::from_rgba(1.0, 1.0, 1.0, alpha));
                 } else {
@@ -1628,30 +1655,15 @@ impl<M> canvas::Program<M> for SigilCanvas {
             }
         }
 
-        // Centre: small ring + core dot (the dot breathes with spawns).
+        // Centre: smooth radial glow (breathing with spawns), a small ring
+        // and the core dot.
+        radial_glow(&mut frame, c, max_r * 0.30, 0.14 + 0.18 * self.glow, 26);
         let core_r = max_r * 0.07;
         frame.stroke(&Path::circle(c, core_r), hairline(0.30 + 0.25 * self.glow));
         frame.fill(
             &Path::circle(c, 2.0 + 0.9 * self.glow),
             Color::from_rgba(1.0, 1.0, 1.0, 0.55 + 0.45 * self.glow),
         );
-
-        // Soft overhead lamp: a fixed vertical gradient falling from the top
-        // edge (no rotation) — reads as gentle top light washing the sigil.
-        {
-            use iced::widget::canvas::gradient::Linear;
-            let lamp = canvas::Gradient::Linear(
-                Linear::new(
-                    iced::Point::new(c.x, bounds.height * 0.0),
-                    iced::Point::new(c.x, bounds.height),
-                )
-                .add_stop(0.0, Color::from_rgba(1.0, 1.0, 1.0, 0.10))
-                .add_stop(0.30, Color::from_rgba(1.0, 1.0, 1.0, 0.035))
-                .add_stop(0.62, Color::TRANSPARENT)
-                .add_stop(1.0, Color::TRANSPARENT),
-            );
-            frame.fill_rectangle(iced::Point::ORIGIN, bounds.size(), lamp);
-        }
 
         // Split indicator (faint vertical divider between the click zones).
         frame.stroke(
