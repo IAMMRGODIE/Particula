@@ -455,8 +455,6 @@ pub struct ParticulaView {
     about_fade: f32,
     /// Dim cursor for the master off state (0 = lit, 1 = fully dimmed).
     off_dim: f32,
-    /// Spawn glow pulse: 1 when particles are born, eases to 0 (~0.45 s).
-    glow: f32,
 
     /// Randomize targets being eased into (id, target) on each tick.
     randomize_pending: Vec<(String, f32)>,
@@ -577,7 +575,6 @@ impl ParticulaView {
             about: false,
             about_fade: 0.0,
             off_dim: 0.0,
-            glow: 0.0,
             randomize_pending: Vec::new(),
             last_frame: None,
         }
@@ -656,11 +653,8 @@ impl ParticulaView {
                     lifetime: ev.lifetime_samples as f32 / sr,
                 };
                 self.next_dot += 1;
-                self.glow = 1.0;
             }
         }
-        // Spawn glow decay.
-        self.glow = (self.glow - dt / 0.45).max(0.0);
 
         // 2. Age the dots (keep them until the slot is reused by a new spawn).
         for ring in 0..RINGS {
@@ -750,7 +744,6 @@ impl ParticulaView {
                 phases: self.ring_phases,
                 bg_phase: self.bg_phase,
                 shift: self.centre_shift,
-                glow: self.glow,
             })
             .width(Length::Fill)
             .height(Length::Fill),
@@ -1404,38 +1397,33 @@ fn page_button_style(active: bool) -> impl Fn(&iced::Theme, button::Status) -> b
     }
 }
 
-/// Approximated radial gradient: stacked concentric circles with *differential*
-/// alpha (drawn outside-in so the layers sum to peak * (1 - r/R)^2). iced 0.14
-/// exposes neither radial gradients nor mesh drawing, and its image feature
-/// pulls crates that are not available offline — 24-30 differential layers are
-/// visually indistinguishable from a smooth falloff at these radii.
-fn radial_glow(
-    frame: &mut canvas::Frame<iced::Renderer>,
-    center: iced::Point,
-    radius: f32,
-    peak: f32,
-    layers: usize,
-) {
-    if peak <= 0.002 || radius <= 0.5 {
-        return;
-    }
-    let target = |r: f32| {
-        let x = (1.0 - r / radius).max(0.0);
-        peak * x * x
-    };
-    let mut prev = 0.0_f32;
-    for i in (1..=layers).rev() {
-        let r = radius * (i as f32 / layers as f32).powf(0.8);
-        let cur = target(r);
-        let a = (cur - prev).max(0.0);
-        if a > 0.002 {
-            frame.fill(
-                &canvas::Path::circle(center, r),
-                Color::from_rgba(1.0, 1.0, 1.0, a),
-            );
-        }
-        prev = cur;
-    }
+/// Procedurally generated radial-gradient glow sprite (white, alpha falls off
+/// quadratically). iced 0.14 exposes neither radial gradients nor mesh
+/// drawing, but it can draw images — so a pre-rendered sprite gives a true
+/// smooth radial falloff (one draw call per glow).
+fn glow_sprite() -> iced::widget::image::Handle {
+    static HANDLE: std::sync::OnceLock<iced::widget::image::Handle> = std::sync::OnceLock::new();
+    HANDLE
+        .get_or_init(|| {
+            const N: u32 = 64;
+            let mut px = vec![0u8; (N * N * 4) as usize];
+            let c = (N as f32 - 1.0) * 0.5;
+            for y in 0..N {
+                for x in 0..N {
+                    let dx = x as f32 - c;
+                    let dy = y as f32 - c;
+                    let d = (dx * dx + dy * dy).sqrt() / c;
+                    let a = (1.0 - d).max(0.0).powf(2.2);
+                    let i = ((y * N + x) * 4) as usize;
+                    px[i] = 255;
+                    px[i + 1] = 255;
+                    px[i + 2] = 255;
+                    px[i + 3] = (a * 255.0) as u8;
+                }
+            }
+            iced::widget::image::Handle::from_rgba(N, N, px)
+        })
+        .clone()
 }
 
 /// A faint chevron hinting the clickable half (fades out while the panel
@@ -1566,8 +1554,6 @@ struct SigilCanvas {
     bg_phase: f32,
     /// Horizontal nudge applied to the pattern centre (px).
     shift: f32,
-    /// Spawn glow pulse (0..1): brightens the core and particle halos.
-    glow: f32,
 }
 
 impl<M> canvas::Program<M> for SigilCanvas {
@@ -1645,8 +1631,15 @@ impl<M> canvas::Program<M> for SigilCanvas {
                 if alpha > 0.02 {
                     // Radial-gradient halo sprite under bright spawns.
                     if alpha > 0.22 {
-                        let boost = 0.75 + 0.25 * self.glow;
-                        radial_glow(&mut frame, dot_pos, 11.0, alpha * 0.5 * boost, 10);
+                        let hr = 11.0;
+                        frame.draw_image(
+                            iced::Rectangle::new(
+                                iced::Point::new(dot_pos.x - hr, dot_pos.y - hr),
+                                iced::Size::new(hr * 2.0, hr * 2.0),
+                            ),
+                            iced::widget::canvas::Image::new(glow_sprite())
+                                .opacity(alpha * 0.5),
+                        );
                     }
                     frame.fill(&Path::circle(dot_pos, 2.6), Color::from_rgba(1.0, 1.0, 1.0, alpha));
                 } else {
@@ -1655,15 +1648,19 @@ impl<M> canvas::Program<M> for SigilCanvas {
             }
         }
 
-        // Centre: smooth radial glow (breathing with spawns), a small ring
+        // Centre: a static radial-gradient glow (no pulsing), a small ring
         // and the core dot.
-        radial_glow(&mut frame, c, max_r * 0.30, 0.14 + 0.18 * self.glow, 26);
-        let core_r = max_r * 0.07;
-        frame.stroke(&Path::circle(c, core_r), hairline(0.30 + 0.25 * self.glow));
-        frame.fill(
-            &Path::circle(c, 2.0 + 0.9 * self.glow),
-            Color::from_rgba(1.0, 1.0, 1.0, 0.55 + 0.45 * self.glow),
+        let glow_r = max_r * 0.30;
+        frame.draw_image(
+            iced::Rectangle::new(
+                iced::Point::new(c.x - glow_r, c.y - glow_r),
+                iced::Size::new(glow_r * 2.0, glow_r * 2.0),
+            ),
+            iced::widget::canvas::Image::new(glow_sprite()).opacity(0.16_f32),
         );
+        let core_r = max_r * 0.07;
+        frame.stroke(&Path::circle(c, core_r), hairline(0.30));
+        frame.fill(&Path::circle(c, 2.0), Color::from_rgba(1.0, 1.0, 1.0, 0.85));
 
         // Split indicator (faint vertical divider between the click zones).
         frame.stroke(
