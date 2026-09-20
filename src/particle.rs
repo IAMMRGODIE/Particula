@@ -189,10 +189,26 @@ impl Particle {
         self.drift += (1.0 - self.playback_rate) / cap1;
         self.position = smoothed + self.drift;
 
-        // Cubic reads with physical-ring wrap: the head loops back into
-        // older/newer material at the span edges (no boundary clicks).
+        // Ring seam guard: the buffer's two ends are physically adjacent but
+        // their *content* is a whole lap apart, so a moving read head that
+        // crosses the seam steps in material. Fade through the seam with a
+        // ~3 ms smoothstep window instead of jumping (a short, inaudible dip
+        // once per lap; a stationary head — rate 1 — never touches it).
+        let phase = self.position - self.position.floor();
+        let seam = phase.min(1.0 - phase);
+        let fade_t = (0.003 * (1.0 / dt)) / cap1;
+        let mut seam_gain = if fade_t > 0.0 {
+            (seam / fade_t).min(1.0)
+        } else {
+            1.0
+        };
+        seam_gain = seam_gain * seam_gain * (3.0 - 2.0 * seam_gain);
+
+        // Cubic reads with physical-ring wrap; the texture is a looping buffer
+        // too, so it is read at the same in-ring phase.
         let mut s = read_cubic(history, self.position) * (1.0 - texture_blend)
-            + texture.sample(self.position) * texture_blend;
+            + texture.sample(phase) * texture_blend;
+        s *= seam_gain;
 
         // Envelope: linear attack, then exponential decay.
         if self.attack_elapsed < self.attack_samples {

@@ -114,14 +114,18 @@ fn feedback_changes_output_and_stays_bounded() {
     for &s in out_on.iter() {
         assert!(s.is_finite(), "non-finite with feedback: {s}");
     }
-    let rms = |v: &[f32]| (v.iter().map(|&s| s * s).sum::<f32>() / v.len() as f32).sqrt();
     let peak_on = out_on.iter().fold(0.0_f32, |a, &s| a.max(s.abs()));
     assert!(peak_on < 4.0, "feedback must stay bounded, peak {peak_on}");
+    // The cleanest evidence that the injected feedback is actually read back:
+    // the largest per-sample difference against the identical engine with
+    // feedback off (the injected value is 0.7x the voice, so it dominates).
+    let max_diff = out_on
+        .iter()
+        .zip(out_off.iter())
+        .fold(0.0_f32, |a, (x, y)| a.max((x - y).abs()));
     assert!(
-        (rms(&out_on) - rms(&out_off)).abs() > 1e-4,
-        "feedback should measurably change the output (on={} off={})",
-        rms(&out_on),
-        rms(&out_off)
+        max_diff > 1e-2,
+        "feedback should measurably change the output, max diff {max_diff}"
     );
 }
 
