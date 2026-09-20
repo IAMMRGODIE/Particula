@@ -1,0 +1,4 @@
+# "cargo bundle ..." runs the i_am_bundler tool that lives in the i_am_dsp
+# workspace. Run it from this directory (the path below is relative to it).
+[alias]
+bundle = "run --manifest-path ../i_am_dsp/i_am_bundler/Cargo.toml --"

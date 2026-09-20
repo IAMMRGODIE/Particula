@@ -1,21 +1,16 @@
-//! Headless CLAP probe for Particula (requires the optional \"probe\" feature /
-//! the clack-host crate). Without the feature this example prints a hint.
-//!
-//! Run: cargo run --release -p particula_plugin --features probe --example clap_probe -- <path-to-clap>
-
-//! Headless CLAP probe for Particula (requires the vendored clack host).
+//! Headless CLAP probe for Particula (requires the optional "probe" feature, which
+//! pulls in the clack-host crate). Without the feature this example prints a hint.
 //!
 //! Loads the built plugin, feeds a known stereo signal through the Main
 //! stereo in/out for ~2.5 s, and reports whether the wet path produces any
 //! energy beyond the dry passthrough — reproducing what a DAW would do
 //! without the DAW.
 //!
-//! Run: cargo run --release -p particula_plugin --example clap_probe -- <path-to-clap-or-dll>
+//! Run: cargo run --release -p particula_plugin --features probe --example clap_probe -- <path-to-clap-or-dll>
 
 
 #[cfg(feature = "probe")]
 mod imp {
-    use clack_host::factory::plugin::PluginFactory;
     use clack_host::prelude::*;
     use std::error::Error;
 
@@ -37,8 +32,8 @@ pub fn main_body() -> Result<(), Box<dyn Error>> {
         .unwrap_or_else(|| "target/release/Particula.clap".to_string());
     println!("loading {path}");
 
-    let bundle = unsafe { PluginBundle::load(&path)? };
-    let factory = bundle.get_factory::<PluginFactory>().unwrap();
+    let bundle = unsafe { PluginEntry::load(&path)? };
+    let factory = bundle.get_plugin_factory().unwrap();
     let desc = factory.plugin_descriptor(0).ok_or("no descriptor 0")?;
     let plugin_id = desc.id().ok_or("no plugin id")?;
     println!("descriptor: {} \"{}\"", plugin_id.to_str()?, desc.name().unwrap_or(c"").to_str()?);

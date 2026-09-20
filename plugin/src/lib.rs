@@ -6,9 +6,15 @@
 //! (ui.rs) reads and writes the same atomic map, so there is no shared mutable
 //! state between the GUI and audio threads.
 //!
-//! Build (offline):
-//!   cargo build --release -p particula_plugin
-//! then rename target/release/particula_plugin.dll -> Particula.clap
+//! Build:
+//!   cargo build --release -p particula_plugin          # CLAP only
+//!   cargo bundle -p particula_plugin --features vst3   # .clap + .vst3
+//!
+//! `cargo bundle` is the i_am_bundler tool that lives in the i_am_dsp workspace (see
+//! .cargo/config.toml here); the metadata it names the bundles with comes from
+//! `[package.metadata.i_am_dsp]`. It writes target/release/I Am Particula.clap and
+//! target/release/I Am Particula.vst3, and refuses to write a VST3 bundle if the
+//! library came out without the VST3 entry points.
 
 mod ui;
 

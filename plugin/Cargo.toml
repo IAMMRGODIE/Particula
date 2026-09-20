@@ -17,7 +17,17 @@ crossbeam-channel = "0.5.16"
 clack-host = { version = "0.1.1", optional = true }
 
 [features]
+# Adds the VST3 entry points (GetPluginFactory / InitDll / ExitDll) to the
+# exported library, so \`cargo bundle --features vst3\` can pack a .vst3.
+vst3 = ["i_am_plugin/vst3"]
+
 # Optional headless CLAP probe: requires the vendored clack host
 # (C:\projects\dsp\clack). Enable once it exists again:
 #   cargo run -p particula_plugin --features probe --example clap_probe
 probe = ["dep:clack-host"]
+
+# Read by "cargo bundle" (the i_am_bundler tool) when naming the .vst3/.clap bundle.
+[package.metadata.i_am_dsp]
+name = "I Am Particula"
+vendor = "I Am Plugins"
+id = "dev.particula"
