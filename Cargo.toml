@@ -1,6 +1,6 @@
 [package]
 name = "particula"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 description = "Experimental sound-design particle effecter (granular cloud engine)"
 license = "MPL-2.0"
