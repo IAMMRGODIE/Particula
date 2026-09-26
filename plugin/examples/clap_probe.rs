@@ -29,7 +29,7 @@ const BLOCKS: usize = 60; // ~2.5 s
 pub fn main_body() -> Result<(), Box<dyn Error>> {
     let path = std::env::args()
         .nth(1)
-        .unwrap_or_else(|| "target/release/Particula.clap".to_string());
+        .unwrap_or_else(|| "target/release/I Am Particula.clap".to_string());
     println!("loading {path}");
 
     let bundle = unsafe { PluginEntry::load(&path)? };

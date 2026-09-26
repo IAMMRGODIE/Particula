@@ -780,16 +780,26 @@ impl ParticulaView {
         // ---- side panel (exactly one visible at a time) ----
         // Panels float as overlay layers; the sigil stays perfectly centred
         // regardless of whether a panel fades in/out.
-        let left_overlay = container(self.side_panel(0, LEFT_PAGES, self.panel_left))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .align_x(iced::Alignment::Start)
-            .align_y(iced::Alignment::Center);
-        let right_overlay = container(self.side_panel(1, RIGHT_PAGES, self.panel_right))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .align_x(iced::Alignment::End)
-            .align_y(iced::Alignment::Center);
+        // The panels swallow presses that land on them (a harmless message),
+        // so clicking a panel — its rows, its empty space — never reaches the
+        // half-zones underneath and cannot close the panel by accident.
+        // Controls inside the panel still work: they consume the press first.
+        let left_overlay = container(
+            iced::widget::mouse_area(self.side_panel(0, LEFT_PAGES, self.panel_left))
+                .on_press(ParticulaMessage::Tick),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_x(iced::Alignment::Start)
+        .align_y(iced::Alignment::Center);
+        let right_overlay = container(
+            iced::widget::mouse_area(self.side_panel(1, RIGHT_PAGES, self.panel_right))
+                .on_press(ParticulaMessage::Tick),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_x(iced::Alignment::End)
+        .align_y(iced::Alignment::Center);
         let body = iced::widget::stack![centre, left_overlay, right_overlay]
             .width(Length::Fill)
             .height(Length::Fill);

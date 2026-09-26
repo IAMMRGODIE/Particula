@@ -30,13 +30,22 @@
 
 为了开发方便，在 `Cargo.toml` 里面 `i_am_dsp` 相关的依赖都是填的路径，所以在编译的时候需要先手动改一下.
 
-### 构建 CLAP
+### 构建 CLAP / VST3
 
 ```bash
+# 推荐：用 bundler 一次产出 .clap 与 .vst3（会校验库里的 VST3 导出入口）
+cargo bundle --manifest-path plugin/Cargo.toml -p particula_plugin --features vst3
+#   → target/release/I Am Particula.clap
+#   → target/release/I Am Particula.vst3/   (VST3 bundle 目录)
+
+# 只要 CLAP（不启用 vst3 feature 时不链接 VST3 SDK）
 cargo build --release -p particula_plugin
-cp target/release/particula_plugin.dll target/release/Particula.clap
-# 把 Particula.clap 放进 DAW 的 CLAP 插件目录即可
+cp target/release/particula_plugin.dll "target/release/I Am Particula.clap"
 ```
+
+把 `I Am Particula.clap`（或整个 `I Am Particula.vst3` 目录）放进 DAW 的插件目录即可。
+`cargo bundle` 来自 i_am_dsp workspace 的 `i_am_bundler`（本仓库 `.cargo/config.toml` 已配好别名），
+包名/厂商/ID 取自 `plugin/Cargo.toml` 的 `[package.metadata.i_am_dsp]`。
 
 ### Standalone（不依赖 DAW）
 
@@ -48,7 +57,7 @@ cargo run --release -p particula_plugin --example standalone
 ### 无头探针（验证 wet 通路）
 
 ```bash
-cargo run --release -p particula_plugin --example clap_probe -- target/release/Particula.clap
+cargo run --release -p particula_plugin --example clap_probe -- "target/release/I Am Particula.clap"
 ```
 
 ## 测试
