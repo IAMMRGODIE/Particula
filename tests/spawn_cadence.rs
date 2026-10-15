@@ -33,24 +33,24 @@ struct BeatCtx {
     infos: ProcessInfos,
 }
 impl BeatCtx {
-    fn new(beat: f32) -> Self {
+    fn new(beat: f64) -> Self {
         let mut infos = ProcessInfos::default();
         infos.sample_rate = SR;
         infos.tempo = Some(120.0);
         infos.playing = true;
         infos.trustable = true;
-        infos.current_beat_number = Some(beat);
+        infos.position_beats = Some(beat);
         Self { infos }
     }
-    /// Paused transport: current_beat_number is frozen, but the internal
-    /// BPM counter keeps running (writing/previewing while paused).
-    fn paused(beat: f32) -> Self {
+    /// Paused transport: position_beats is frozen, but the local grid keeps
+    /// running (writing/previewing while paused).
+    fn paused(beat: f64) -> Self {
         let mut infos = ProcessInfos::default();
         infos.sample_rate = SR;
         infos.tempo = Some(120.0);
         infos.playing = false;
         infos.trustable = true;
-        infos.current_beat_number = Some(beat);
+        infos.position_beats = Some(beat);
         Self { infos }
     }
 }
@@ -177,7 +177,7 @@ fn host_beat_number_drives_the_grid() {
     e.spawn_interval_beats = 0.25;
     e.max_particles = 256.0;
     e.texture_blend = 0.0;
-    let mut ctx: Box<dyn ProcessContext> = Box::new(BeatCtx::new(12.4));
+    let mut ctx: Box<dyn ProcessContext> = Box::new(BeatCtx::new(12.4_f64));
     let times = run_track(&mut e, &mut ctx, 4096);
     assert!(
         times.is_empty(),
@@ -196,7 +196,7 @@ fn paused_transport_falls_back_to_bpm_counter() {
     e.spawn_interval_beats = 0.25;
     e.max_particles = 256.0;
     e.texture_blend = 0.0;
-    let mut ctx: Box<dyn ProcessContext> = Box::new(BeatCtx::paused(12.4));
+    let mut ctx: Box<dyn ProcessContext> = Box::new(BeatCtx::paused(12.4_f64));
     let times = run_track(&mut e, &mut ctx, 5 * SR);
     assert!(!times.is_empty(), "paused transport must still spawn on the bpm grid");
     // 5 s at 120 BPM with 0.25-beat interval ≈ 40 spawns.

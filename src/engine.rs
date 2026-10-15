@@ -6,7 +6,7 @@ use std::{
 };
 
 use crossbeam_channel::Sender;
-use i_am_dsp::{Effect, ProcessContext, tools::{bpm_syncer::BpmSyncer, ring_buffer::RingBuffer}};
+use i_am_dsp::{Effect, ProcessContext, tools::{beat_clock::BeatClock, ring_buffer::RingBuffer}};
 use i_am_dsp_derive::Parameters;
 
 use crate::{
@@ -204,18 +204,21 @@ pub struct ParticulaEngine<const CHANNELS: usize = 1> {
     // --- internal state (never host parameters) ---
     #[skip]
     history: RingBuffer<f32>,
+    /// The internal beat grid, for when the transport is stopped or the host
+    /// reports no beat position. A local `BeatClock`: it runs on `fallback_bpm`
+    /// (or the host tempo) and is never re-anchored from the host.
     #[skip]
-    bpm: BpmSyncer,
+    bpm: BeatClock,
     #[skip]
-    next_spawn_beat: f32,
+    next_spawn_beat: f64,
     #[skip]
     was_playing: bool,
-    /// Whether the beat phase currently comes from the host (current_beat_number)
-    /// or the internal counter; used to detect mid-song playhead jumps.
+    /// Whether the beat phase currently comes from the host (position_beats)
+    /// or the internal grid; used to detect mid-song playhead jumps.
     #[skip]
     use_host_phase: bool,
     #[skip]
-    prev_beat: f32,
+    prev_beat: f64,
     #[skip]
     texture: Texture,
     #[skip]
@@ -319,7 +322,7 @@ impl<const CHANNELS: usize> ParticulaEngine<CHANNELS> {
             pan_min: -0.8,
             pan_max: 0.8,
             history: RingBuffer::new(history_capacity.max(1)),
-            bpm: BpmSyncer::new(sample_rate.max(1)),
+            bpm: BeatClock::new(sample_rate.max(1)),
             next_spawn_beat: 0.25,
             was_playing: false,
             use_host_phase: false,
@@ -567,8 +570,8 @@ impl<const CHANNELS: usize> ParticulaEngine<CHANNELS> {
         // rate (their Hilbert/Biquad coefficients); a sample-rate change only
         // affects newly spawned particles. TODO: rebuild live particle state.
         self.sample_rate = sample_rate;
-        self.bpm = BpmSyncer::new(sample_rate.max(1));
-        self.next_spawn_beat = self.spawn_interval_beats.max(0.03125);
+        self.bpm = BeatClock::new(sample_rate.max(1));
+        self.next_spawn_beat = self.spawn_interval_beats.max(0.03125) as f64;
     }
 }
 
@@ -610,7 +613,7 @@ impl<const CHANNELS: usize> Effect<CHANNELS> for ParticulaEngine<CHANNELS> {
         }
         // Refreshes host tempo/beat availability for the GUI.
         let host_known = infos.trustable
-            && (infos.tempo.is_some_and(|t| t > 0.0) || infos.current_beat_number.is_some());
+            && (infos.tempo.is_some_and(|t| t > 0.0) || infos.position_beats.is_some());
         self.host_tempo_known.store(host_known, Ordering::Relaxed);
 
         // 0b. History length: beats (BPM grid on) or ms; rebuilds the delay
@@ -652,14 +655,19 @@ impl<const CHANNELS: usize> Effect<CHANNELS> for ParticulaEngine<CHANNELS> {
         } else {
             self.fallback_bpm
         };
-        self.bpm.next_k(tempo, 1);
+        // The local grid keeps running whatever the transport does: the user may still be
+        // previewing while the DAW is stopped, and the cloud should keep moving with them.
+        // `advance_local` is fed an absolute sample count, so it measures from the session
+        // start instead of accumulating a per-sample increment.
+        let mut local_beat = self.bpm.advance_local(self.sample_count as u64, tempo as f64);
         if infos.playing && !self.was_playing {
             // Transport restart: a fresh timeline — re-align the beat phase
             // and wipe the delay line/particles so the cloud rebuilds from
             // the (possibly different) source position without smearing the
             // previous section across the feedback path.
-            self.bpm.reset();
-            self.next_spawn_beat = self.spawn_interval_beats.max(0.03125);
+            self.bpm.anchor(self.sample_count as u64, 0.0, tempo as f64, 0.0);
+            local_beat = 0.0;
+            self.next_spawn_beat = self.spawn_interval_beats.max(0.03125) as f64;
             self.clear_all();
         }
         self.was_playing = infos.playing;
@@ -668,22 +676,22 @@ impl<const CHANNELS: usize> Effect<CHANNELS> for ParticulaEngine<CHANNELS> {
         //    free-running millisecond interval (Architecture.md sec.6/7).
         //
         // Beat position (two-layer detection):
-        //  layer 1 — transport says playing AND the host reports a beat number:
-        //    use it; otherwise (paused, or no host beat) fall back to the
-        //    internal BPM counter. A paused transport leaves current_beat_number
-        //    frozen, but the user may still be writing/previewing, so the cloud
-        //    keeps running on the internal grid there.
+        //  layer 1 — transport says playing AND the host reports a beat position:
+        //    use it; otherwise (paused, or no host beat) fall back to the local
+        //    grid. A paused transport leaves position_beats frozen, but the user
+        //    may still be writing/previewing, so the cloud keeps running on the
+        //    internal grid there.
         //  layer 2 — while on the host path, a fast forward/backward jump of
         //    the playhead (mid-song seek) realigns `next_spawn_beat` to the
         //    next grid point after the playhead; no burst, no stale targets.
-        let interval = self.spawn_interval_beats.max(0.03125);
+        let interval = self.spawn_interval_beats.max(0.03125) as f64;
         let use_host = infos.playing
             && infos.trustable
-            && infos.current_beat_number.is_some();
+            && infos.position_beats.is_some();
         let beat_now = if use_host {
-            infos.current_beat_number.unwrap_or(self.bpm.read())
+            infos.position_beats.unwrap_or(local_beat)
         } else {
-            self.bpm.read()
+            local_beat
         };
         let jumped = (self.prev_beat - beat_now).abs() > interval * 2.0 + 0.001;
         let switched = use_host != self.use_host_phase || jumped;
