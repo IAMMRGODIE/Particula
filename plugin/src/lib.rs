@@ -26,7 +26,7 @@ use crossbeam_channel::{Receiver, unbounded};
 
 use i_am_dsp::{
     Effect, ProcessContext,
-    prelude::{ParamMap, Parameter, Parameters, Paramed, SetValue},
+    prelude::{ParamMap, Parameter, Parameters, Paramed, SetValue, StableIdScheme},
 };
 use i_am_dsp_iced::Processor;
 use i_am_plugin::{Descriptor, Plugin, Tag, WindowOptions, export_clap};
@@ -69,7 +69,14 @@ impl ParticulaProcessor {
         let host_tempo_known = engine.host_tempo_known_flag();
         let shoot = engine.shoot_flag();
         Self {
-            engine: Paramed::new(engine),
+            // The ids a host stores automation under used to be the parameter's position, and
+            // builds before ids were derived from identifiers are in users' projects. Pinning the
+            // scheme here reproduces those ids exactly; see tests/stable_ids.rs, which freezes
+            // the table so a future reorder cannot silently move them.
+            //
+            // Anything new should pin its own id with `#[id(stable = N)]` instead of relying on
+            // position: the scheme only holds while parameters are appended at the end.
+            engine: Paramed::new_with_scheme(engine, StableIdScheme::Position),
             stats: Arc::new([AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0)]),
             spawn_rx: Arc::new(Mutex::new(rx)),
             panic_flag,
