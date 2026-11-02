@@ -37,7 +37,7 @@ pub const BG_PANEL: Color = Color::from_rgb(0.046, 0.046, 0.046);
 pub const GLOW: Color = Color::from_rgb(0.95, 0.95, 0.95);
 
 pub const MONO: Font = Font::MONOSPACE;
-/// Embedded Crimson Text (loaded by the plugin's EMBEDDED_FONT hook).
+/// Embedded Crimson Text (loaded by the editor's `with_font`).
 pub const DISPLAY: Font = Font {
     family: Family::Name("Crimson Text"),
     ..Font::DEFAULT
@@ -73,7 +73,7 @@ pub enum ParticulaMessage {
     Tick,
 }
 
-impl i_am_dsp_iced::Message for ParticulaMessage {
+impl i_am_dsp::Message for ParticulaMessage {
     fn from_note_event(_: i_am_dsp::NoteEvent) -> Self {
         Self::Tick
     }
@@ -462,7 +462,7 @@ pub struct ParticulaView {
     last_frame: Option<Instant>,
 }
 
-impl i_am_dsp_iced::SyncedView for ParticulaView {
+impl crate::iced_backend::SyncedView for ParticulaView {
     type Message = ParticulaMessage;
 
     fn update(&mut self, message: &Self::Message) {

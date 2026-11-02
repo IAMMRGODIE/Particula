@@ -2,7 +2,7 @@
 name = "particula_plugin"
 version = "0.1.0"
 edition = "2024"
-description = "Particula — CLAP plugin + standalone host (via i_am_plugin / i_am_dsp_iced)"
+description = "Particula — CLAP plugin + standalone host (via i_am_plugin's Editor seam)"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -10,11 +10,19 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 particula = { path = ".." }
 i_am_dsp = { path = "../../i_am_dsp/i_am_dsp" }
-i_am_dsp_iced = { path = "../../i_am_dsp/i_am_dsp_iced" }
 i_am_plugin = { path = "../../i_am_dsp/i_am_plugin" }
-iced = { version = "0.14.0", features = ["canvas", "advanced", "image"] }
+# The editor is iced, through the toolkit-neutral Editor seam in i_am_plugin.
+# i_am_dsp's workspace dropped its own iced crates; src/iced_backend keeps the
+# small part this plug-in needs so the DSP workspace stays iced-free.
+iced = { version = "0.14.0", features = ["canvas", "advanced", "image", "tokio"] }
+iced_baseview = "0.5.2"
 crossbeam-channel = "0.5.16"
 clack-host = { version = "0.1.1", optional = true }
+
+[dev-dependencies]
+# The standalone example plays the processor through the default output device.
+cpal = "0.18.2"
+lazy_static = "1.5.0"
 
 [features]
 # Adds the VST3 entry points (GetPluginFactory / InitDll / ExitDll) to the

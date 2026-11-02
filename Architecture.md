@@ -1,6 +1,6 @@
 # Particula — 实验性声音设计粒子效果器 · 架构文档
 
-> 状态：引擎 v0/v1/v2 全部完成（24 个测试），CLAP + VST3 导出 ✅（`plugin/` crate → `I Am Particula.clap` / `I Am Particula.vst3`），standalone ✅（iced Demo 宿主）；UI 设计暂缓。
+> 状态：引擎 v0/v1/v2 全部完成（24 个测试），CLAP + VST3 导出 ✅（`plugin/` crate → `I Am Particula.clap` / `I Am Particula.vst3`），standalone ✅（本地 iced 后端 Demo 宿主）；UI ✅（iced HOMOLOGY 控制面）。
 > 关联代码库：`i_am_dsp`（workspace 根：`i_am_dsp/Cargo.toml`）。particula 计划成为该 workspace 的第 6 个成员。
 
 ## 1. 定位与目标
@@ -139,7 +139,7 @@
 ## 11. 模块划分与集成
 
 - 位置：`C:\projects\dsp\particula` —— **独立 workspace**（`[package] particula` + `plugin/` 子 crate），非 i_am_dsp workspace 成员；引擎经 path 依赖 `i_am_dsp`（`default-features=false`）。
-- **CLAP/standalone 导出**：`plugin/` crate（`crate-type = ["cdylib", "rlib"]`）——`ParticulaProcessor(Paramed<ParticulaEngine<2>>)`：`Processer` 包装 + 空视图占位（UI 后置）+ `Plugin` (Descriptor/param_map) + `export_clap!`；standalone 用 `i_am_dsp_iced::demo::Demo`（iced application + cpal）。宿主参数自动化 = `Paramed` 的 ParamMap 原子表 → 音频线程 `sync_params()`。
+- **CLAP/standalone 导出**：`plugin/` crate（`crate-type = ["cdylib", "rlib"]`）——`ParticulaProcessor(Paramed<ParticulaEngine<2>>)`：`Processer` 包装 + `ui.rs` 的 HOMOLOGY 控制面 + `Plugin` (Descriptor/param_map) + `export_clap!`；GUI 通过 `i_am_plugin::Editor` 接缝接入，实现在 `plugin/src/iced_backend`（本地 iced 后端：`SyncedView`/`IcedEditor` + `iced_baseview`），standalone 示例用它跑 iced application + cpal。宿主参数自动化 = `Paramed` 的 ParamMap 原子表 → 音频线程 `sync_params()`。
 - 产物：`cargo bundle --manifest-path plugin/Cargo.toml -p particula_plugin --features vst3` → `target/release/I Am Particula.clap` 与 `I Am Particula.vst3/`（仅 CLAP 时 `cargo build --release -p particula_plugin` 后把 dll 改名为 `I Am Particula.clap`）；standalone：`cargo run --release -p particula_plugin --example standalone`。
 - 文件：
   - `engine.rs` — `Effect<CHANNELS>` 实现、每 block 编排

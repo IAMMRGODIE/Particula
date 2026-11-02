@@ -16,6 +16,7 @@
 //! target/release/I Am Particula.vst3, and refuses to write a VST3 bundle if the
 //! library came out without the VST3 entry points.
 
+pub mod iced_backend;
 mod ui;
 
 use std::sync::{
@@ -28,7 +29,7 @@ use i_am_dsp::{
     Effect, ProcessContext,
     prelude::{ParamMap, Parameter, Parameters, Paramed, SetValue, StableIdScheme},
 };
-use i_am_dsp_iced::Processor;
+use iced_backend::{IcedEditor, Processor as IcedProcessor};
 use i_am_plugin::{Descriptor, Plugin, Tag, WindowOptions, export_clap};
 use particula::{ParticulaEngine, SpawnEvent};
 
@@ -115,9 +116,8 @@ impl Parameters for ParticulaProcessor {
     }
 }
 
-impl Processor for ParticulaProcessor {
+impl i_am_dsp::Processor for ParticulaProcessor {
     type Message = ParticulaMessage;
-    type SyncedView = ParticulaView;
 
     fn delay(&self) -> usize {
         self.engine.delay()
@@ -153,6 +153,11 @@ impl Processor for ParticulaProcessor {
         self.refresh_stats();
     }
 
+}
+
+impl IcedProcessor for ParticulaProcessor {
+    type SyncedView = ParticulaView;
+
     fn synced_view(&self) -> Self::SyncedView {
         // The view owns Arc handles into the shared state and reads/writes
         // them live on every frame; nothing here needs a snapshot.
@@ -173,6 +178,8 @@ impl Plugin for ParticulaProcessor {
         .with_tags(&[Tag::AudioEffect, Tag::Granular])
         .with_vendor("I Am Plugins")
         .with_version(env!("CARGO_PKG_VERSION"));
+
+    const HAS_GUI: bool = true;
 
     fn new() -> Self {
         Self::new(48_000)
@@ -200,13 +207,24 @@ impl Plugin for ParticulaProcessor {
     }
 
 
-    // Crimson Text (OFL, free for commercial use) embedded so the GUI can use
-    // it as the display serif without depending on the host system fonts.
-    const EMBEDDED_FONT: Option<&'static [u8]> =
-        Some(include_bytes!(concat!(
+    /// The GUI: an iced editor over this processor's view, with the display serif
+    /// built in.
+    ///
+    /// This is the only place the plug-in names a GUI toolkit. An egui or slint
+    /// backend would be a different line here and nothing else would change.
+    fn editor(&self) -> Option<Box<dyn i_am_plugin::Editor<Self>>> {
+        // Crimson Text (OFL, free for commercial use) embedded so the GUI can use
+        // it as the display serif without depending on the host system fonts.
+        const CRIMSON_TEXT: &[u8] = include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../CrimsonText-Regular-5.ttf"
-        )));
+        ));
+
+        Some(Box::new(
+            IcedEditor::new(IcedProcessor::synced_view(self))
+                .with_font(CRIMSON_TEXT),
+        ))
+    }
 }
 
 export_clap!(ParticulaProcessor);
